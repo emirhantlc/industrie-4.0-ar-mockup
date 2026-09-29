@@ -3,83 +3,632 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Industrie 4.0 AR Mockup - Testpage</title>
+  <title>Industrie 4.0 AR Mockup - Zwischenlager</title>
+
+  <!-- Exakt wie in deinem ursprünglichen Index -->
   <script src="https://aframe.io/releases/1.4.0/aframe.min.js"></script>
   <script src="https://cdn.jsdelivr.net/gh/AR-js-org/AR.js@3.4.5/aframe/build/aframe-ar.min.js"></script>
+
   <style>
-    :root { color-scheme: dark; }
+    :root {
+      color-scheme: dark;
+      --accent: #c99118;
+      --accent2: #a8760f;
+      --success: #27b878;
+      --danger: #df5858;
+      --glass: rgba(0, 0, 0, 0.68);
+      --glass-strong: rgba(0, 0, 0, 0.84);
+      --line: rgba(255,255,255,.18);
+      --muted: rgba(255,255,255,.68);
+    }
+
+    * { box-sizing: border-box; }
+
     body {
       margin: 0;
       font-family: Arial, sans-serif;
       overflow: hidden;
+      background: #000;
+    }
+
+    /*
+      WICHTIG:
+      Kamera-/Canvas-Darstellung bewusst wieder wie in deinem Original.
+      Kein zweiter Video-Stream, kein Verstecken des AR.js-Videos.
+    */
+    video, canvas {
+      width: 100vw !important;
+      height: 100vh !important;
+      object-fit: contain !important;
+      transform: scaleX(-1) !important;
+    }
+
+    #hud {
+      position: fixed;
+      inset: 0;
+      z-index: 10;
+      pointer-events: none;
+      color: #fff;
+    }
+
+    .topbar {
+      position: absolute;
+      left: 14px;
+      right: 14px;
+      top: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .brand,
+    .scanner-state,
+    #scan-hint,
+    #overlay,
+    .controls {
+      background: var(--glass);
+      border: 1px solid var(--line);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      box-shadow: 0 14px 40px rgba(0,0,0,.28);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 12px;
+      border-radius: 14px;
+    }
+
+    .logo {
+      width: 34px;
+      height: 34px;
+      border-radius: 10px;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(145deg, var(--accent), var(--accent2));
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .brand strong {
+      display: block;
+      font-size: 13px;
+    }
+
+    .brand small {
+      display: block;
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 10px;
+    }
+
+    .scanner-state {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 9px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--danger);
+    }
+
+    .scanner-state.ready .dot {
+      background: var(--success);
+    }
+
+    #scan-frame {
+      position: absolute;
+      left: 50%;
+      top: 48%;
+      transform: translate(-50%, -50%);
+      width: min(48vw, 360px);
+      aspect-ratio: 1 / 1;
+      border: 1px solid rgba(255,255,255,.30);
+      border-radius: 20px;
+      transition: .15s ease;
+    }
+
+    #scan-frame::before,
+    #scan-frame::after,
+    #scan-frame .corner::before,
+    #scan-frame .corner::after {
+      content: "";
+      position: absolute;
+      width: 42px;
+      height: 42px;
+      border-color: var(--accent);
+      border-style: solid;
+    }
+
+    #scan-frame::before {
+      left: -2px;
+      top: -2px;
+      border-width: 5px 0 0 5px;
+      border-radius: 16px 0 0 0;
+    }
+
+    #scan-frame::after {
+      right: -2px;
+      top: -2px;
+      border-width: 5px 5px 0 0;
+      border-radius: 0 16px 0 0;
+    }
+
+    #scan-frame .corner::before {
+      left: -2px;
+      bottom: -2px;
+      border-width: 0 0 5px 5px;
+      border-radius: 0 0 0 16px;
+    }
+
+    #scan-frame .corner::after {
+      right: -2px;
+      bottom: -2px;
+      border-width: 0 5px 5px 0;
+      border-radius: 0 0 16px 0;
+    }
+
+    #scan-frame.found {
+      border-color: rgba(39,184,120,.65);
+      box-shadow: 0 0 32px rgba(39,184,120,.32);
+    }
+
+    #scan-frame.found::before,
+    #scan-frame.found::after,
+    #scan-frame.found .corner::before,
+    #scan-frame.found .corner::after {
+      border-color: var(--success);
+    }
+
+    #scan-hint {
+      position: absolute;
+      left: 50%;
+      top: calc(48% + min(25vw, 190px));
+      transform: translateX(-50%);
+      min-width: 250px;
+      max-width: calc(100vw - 28px);
+      padding: 9px 14px;
+      border-radius: 999px;
+      text-align: center;
+      font-size: 12px;
     }
 
     #overlay {
       display: none;
-      position: fixed;
-      top: 50%;
+      position: absolute;
       left: 50%;
-      z-index: 10;
-      min-width: 220px;
-      padding: 12px;
-      border: 1px solid rgba(255, 255, 255, 0.45);
-      border-radius: 8px;
-      background: rgba(0, 0, 0, 0.55);
-      backdrop-filter: blur(2px);
-      font-size: 16px;
-      color: #fff;
+      bottom: 88px;
+      transform: translateX(-50%);
+      width: min(92vw, 720px);
+      padding: 15px;
+      border-radius: 18px;
+      background: var(--glass-strong);
     }
 
-    /* Kamera-/Canvas-Darstellung */
-    video, canvas {
-      width: 100vw !important;
-      height: 100vh !important;
-      object-fit: contain !important; /* weniger Zoom-Eindruck */
+    .overlay-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    .overlay-header small {
+      display: block;
+      color: var(--muted);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      margin-bottom: 3px;
+    }
+
+    .overlay-header h2 {
+      margin: 0;
+      font-size: 22px;
+    }
+
+    .online {
+      padding: 6px 9px;
+      border-radius: 999px;
+      background: rgba(39,184,120,.14);
+      border: 1px solid rgba(39,184,120,.35);
+      color: #d8ffea;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+    }
+
+    .box {
+      padding: 10px 11px;
+      border-radius: 12px;
+      background: rgba(255,255,255,.07);
+      border: 1px solid rgba(255,255,255,.08);
+    }
+
+    .box small {
+      display: block;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      font-size: 9px;
+      margin-bottom: 4px;
+    }
+
+    .box strong {
+      display: block;
+      font-size: 15px;
+    }
+
+    .box.order {
+      grid-column: 1 / -1;
+    }
+
+    .box.order strong {
+      font-size: 14px;
+      line-height: 1.4;
+    }
+
+    .overlay-footer {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 10px;
+    }
+
+    .controls {
+      pointer-events: auto;
+      position: absolute;
+      left: 50%;
+      bottom: 14px;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 7px;
+      max-width: calc(100vw - 20px);
+      padding: 8px;
+      border-radius: 15px;
+      overflow-x: auto;
+    }
+
+    .controls button {
+      flex: 0 0 auto;
+      border: 0;
+      border-radius: 9px;
+      padding: 9px 11px;
+      background: rgba(255,255,255,.10);
+      color: #fff;
+      font-size: 11px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .controls button.primary {
+      background: var(--accent);
+    }
+
+    @media (max-width: 650px) {
+      #scan-frame { width: min(66vw, 330px); }
+      #scan-hint { top: calc(48% + min(35vw, 180px)); }
+      .grid { grid-template-columns: 1fr 1fr; }
+      .box.order { grid-column: 1 / -1; }
+      .brand small { display: none; }
     }
   </style>
 </head>
+
 <body>
+  <!-- Dieser Block ist absichtlich praktisch 1:1 dein ursprünglicher Kamera-/AR-Aufbau -->
   <a-scene
     vr-mode-ui="enabled: false"
     renderer="logarithmicDepthBuffer: true"
     embedded
     arjs="sourceType: webcam; facingMode: environment; sourceWidth: 1280; sourceHeight: 720; displayWidth: 1280; displayHeight: 720; debugUIEnabled: false;">
+
     <a-marker preset="hiro" id="hiro-marker"></a-marker>
     <a-entity camera></a-entity>
   </a-scene>
 
-  <div id="overlay">
-    <div id="marker-count">The Marker was not yet found</div>
+  <div id="hud">
+    <div class="topbar">
+      <div class="brand">
+        <div class="logo">ZL</div>
+        <div>
+          <strong>Zwischenlager AR</strong>
+          <small>Hiro Marker Scanner</small>
+        </div>
+      </div>
+
+      <div class="scanner-state" id="scanner-state">
+        <span class="dot"></span>
+        <span id="scanner-text">Suche Marker …</span>
+      </div>
+    </div>
+
+    <div id="scan-frame"><span class="corner"></span></div>
+    <div id="scan-hint">Hiro-Marker in den Rahmen halten</div>
+
+    <div id="overlay">
+      <div class="overlay-header">
+        <div>
+          <small>Marker erkannt · HIRO</small>
+          <h2>Zwischenlager</h2>
+        </div>
+        <div class="online">Status · Online</div>
+      </div>
+
+      <div class="grid">
+        <div class="box">
+          <small>Paletten im Lager</small>
+          <strong id="pallet-count">12</strong>
+        </div>
+
+        <div class="box">
+          <small>Paletten-Nr.</small>
+          <strong id="pallet-number">0123</strong>
+        </div>
+
+        <div class="box">
+          <small>Auftrags-Nr.</small>
+          <strong id="order-number">AUF-00001</strong>
+        </div>
+
+        <div class="box">
+          <small>Maschinenlaufzeit</small>
+          <strong id="runtime">00:00:00</strong>
+        </div>
+
+        <div class="box">
+          <small>Maschinenstart</small>
+          <strong id="started">--:--:--</strong>
+        </div>
+
+        <div class="box">
+          <small>Scanvorgänge</small>
+          <strong id="scan-count-box">0</strong>
+        </div>
+
+        <div class="box order">
+          <small>Aktueller Auftrag</small>
+          <strong id="order-text">Dose: Weiß · Deckel: Blau · Kugeln: 3× Blau</strong>
+        </div>
+      </div>
+
+      <div class="overlay-footer">
+        <span id="scan-count">Erkennungen: 0</span>
+        <span id="last-seen">Noch nicht erkannt</span>
+      </div>
+    </div>
+
+    <div class="controls">
+      <button class="primary" id="camera-start">Kamera starten</button>
+      <button id="camera-stop">Kamera ausschalten</button>
+      <button id="test-found">Test Marker</button>
+      <button id="random-order">Neue Testdaten</button>
+      <button id="test-lost">Overlay aus</button>
+    </div>
   </div>
 
   <script>
     const overlay = document.getElementById('overlay');
     const hiroMarker = document.getElementById('hiro-marker');
-    const markerCount = document.getElementById('marker-count');
+    const scanFrame = document.getElementById('scan-frame');
+    const scanHint = document.getElementById('scan-hint');
+    const scannerState = document.getElementById('scanner-state');
+    const scannerText = document.getElementById('scanner-text');
+    const scanCountText = document.getElementById('scan-count');
+    const scanCountBox = document.getElementById('scan-count-box');
+    const lastSeen = document.getElementById('last-seen');
+
     let markerFoundCount = 0;
+    let lostTimer = null;
+    let cameraStopped = false;
+    let markerIsActive = false;
+
+    function randomInt(min, max) {
+      return Math.floor(Math.random() * (max - min + 1)) + min;
+    }
+
+    function randomChoice(list) {
+      return list[Math.floor(Math.random() * list.length)];
+    }
+
+    function generateBalls() {
+      const colors = ['Blau', 'Rot', 'Grün'];
+      const counts = {
+        Blau: randomInt(0, 5),
+        Rot: randomInt(0, 5),
+        Grün: randomInt(0, 5)
+      };
+
+      if (counts.Blau + counts.Rot + counts.Grün === 0) {
+        counts[randomChoice(colors)] = randomInt(1, 5);
+      }
+
+      return Object.entries(counts)
+        .filter(([, count]) => count > 0)
+        .map(([color, count]) => `${count}× ${color}`)
+        .join(', ');
+    }
+
+    function loadRandomOrder() {
+      document.getElementById('pallet-count').textContent = randomInt(4, 20);
+      document.getElementById('pallet-number').textContent =
+        String(randomInt(1, 9999)).padStart(4, '0');
+
+      document.getElementById('order-number').textContent =
+        'AUF-' + String(randomInt(1, 99999)).padStart(5, '0');
+
+      document.getElementById('order-text').textContent =
+        `Dose: Weiß · Deckel: ${randomChoice(['Blau','Rot','Grün'])} · Kugeln: ${generateBalls()}`;
+    }
+
+    const savedStart = Number(localStorage.getItem('zlMachineStartV6'));
+    const machineStart =
+      Number.isFinite(savedStart) && savedStart > 0
+        ? savedStart
+        : Date.now() - randomInt(20 * 60, 8 * 60 * 60) * 1000;
+
+    localStorage.setItem('zlMachineStartV6', String(machineStart));
+
+    function formatDuration(seconds) {
+      const h = Math.floor(seconds / 3600);
+      const m = Math.floor((seconds % 3600) / 60);
+      const s = seconds % 60;
+
+      return [h,m,s].map(value => String(value).padStart(2,'0')).join(':');
+    }
+
+    function updateRuntime() {
+      const seconds = Math.max(0, Math.floor((Date.now() - machineStart) / 1000));
+
+      document.getElementById('runtime').textContent = formatDuration(seconds);
+      document.getElementById('started').textContent =
+        new Date(machineStart).toLocaleTimeString('de-DE', {
+          hour:'2-digit',
+          minute:'2-digit',
+          second:'2-digit'
+        });
+    }
+
+    function showMarker() {
+      /*
+        Solange derselbe Marker noch vor der Kamera ist, werden keine
+        neuen Testdaten erzeugt. Kurze AR.js-Aussetzer ändern also nichts.
+      */
+      clearTimeout(lostTimer);
+
+      if (markerIsActive) {
+        overlay.style.display = 'block';
+        scanFrame.classList.add('found');
+        scannerState.classList.add('ready');
+        scannerText.textContent = 'Hiro-Marker erkannt';
+        scanHint.textContent = 'Marker erkannt · Daten bleiben unverändert';
+        return;
+      }
+
+      markerIsActive = true;
+
+      loadRandomOrder();
+      markerFoundCount += 1;
+
+      scanCountText.textContent = 'Erkennungen: ' + markerFoundCount;
+      scanCountBox.textContent = markerFoundCount;
+
+      lastSeen.textContent =
+        'Zuletzt: ' +
+        new Date().toLocaleTimeString('de-DE', {
+          hour:'2-digit',
+          minute:'2-digit',
+          second:'2-digit'
+        });
+
+      overlay.style.display = 'block';
+      scanFrame.classList.add('found');
+      scannerState.classList.add('ready');
+      scannerText.textContent = 'Hiro-Marker erkannt';
+      scanHint.textContent = 'Marker erkannt · Daten geladen';
+    }
+
+    function hideMarker() {
+      clearTimeout(lostTimer);
+
+      /*
+        Erst wenn der Marker mindestens 1 Sekunde wirklich weg ist,
+        wird der Scanner für einen neuen Auftrag freigegeben.
+        Dadurch führen kurze Erkennungsabbrüche nicht zu neuen Zufallsdaten.
+      */
+      lostTimer = setTimeout(() => {
+        markerIsActive = false;
+        overlay.style.display = 'none';
+        scanFrame.classList.remove('found');
+
+        if (!cameraStopped) {
+          scannerState.classList.remove('ready');
+          scannerText.textContent = 'Suche Marker …';
+          scanHint.textContent = 'Hiro-Marker in den Rahmen halten';
+        }
+      }, 1000);
+    }
 
     hiroMarker.addEventListener('markerFound', () => {
       console.debug('Marker found');
-      markerFoundCount += 1;
-      markerCount.textContent = `The Marker was found the ${markerFoundCount} time`;
-      overlay.style.display = 'block';
+      showMarker();
     });
 
     hiroMarker.addEventListener('markerLost', () => {
       console.debug('Marker lost');
-      overlay.style.display = 'none';
+      hideMarker();
     });
 
-    /* global functions for debugging */
     window.fireEventMarkerFound = () => {
-      const event = new CustomEvent('markerFound');
-      hiroMarker.dispatchEvent(event);
-    }
+      hiroMarker.dispatchEvent(new CustomEvent('markerFound'));
+    };
 
     window.fireEventMarkerLost = () => {
-      const event = new CustomEvent('markerLost');
-      hiroMarker.dispatchEvent(event);
+      hiroMarker.dispatchEvent(new CustomEvent('markerLost'));
+    };
+
+    function stopCamera() {
+      cameraStopped = true;
+      markerIsActive = false;
+      clearTimeout(lostTimer);
+
+      document.querySelectorAll('video').forEach(video => {
+        if (video.srcObject && typeof video.srcObject.getTracks === 'function') {
+          video.srcObject.getTracks().forEach(track => track.stop());
+        }
+      });
+
+      overlay.style.display = 'none';
+      scanFrame.classList.remove('found');
+      scannerState.classList.remove('ready');
+      scannerText.textContent = 'Kamera ausgeschaltet';
+      scanHint.textContent = 'Kamera ausgeschaltet';
     }
+
+    function restartCamera() {
+      location.reload();
+    }
+
+    document.getElementById('camera-start').addEventListener('click', restartCamera);
+    document.getElementById('camera-stop').addEventListener('click', stopCamera);
+
+    document.getElementById('test-found').addEventListener('click', () => {
+      window.fireEventMarkerFound();
+    });
+
+    document.getElementById('test-lost').addEventListener('click', () => {
+      window.fireEventMarkerLost();
+    });
+
+    document.getElementById('random-order').addEventListener('click', () => {
+      loadRandomOrder();
+      overlay.style.display = 'block';
+      scanFrame.classList.add('found');
+      scannerState.classList.add('ready');
+      scannerText.textContent = 'Testdaten geladen';
+      scanHint.textContent = 'Neue zufällige Testdaten geladen';
+    });
+
+    loadRandomOrder();
+    updateRuntime();
+    setInterval(updateRuntime, 1000);
   </script>
 </body>
 </html>
