@@ -315,6 +315,37 @@
     .kpi.live small { margin: 0; color: var(--ok); }
     .kpi.live strong { font-size: 22px; }
 
+    .kpi.vib {
+      grid-column: 1 / -1;
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 12px;
+      background: var(--amber-soft);
+    }
+    .kpi.vib small { margin: 0; color: var(--amber); }
+    .kpi.vib small em {
+      font-style: normal;
+      font-family: var(--f-num);
+      font-size: 9px;
+      padding: 1px 5px;
+      margin-left: 4px;
+      border-radius: 4px;
+      background: rgba(242,165,22,.22);
+    }
+    .vib-meta { display: block; font-family: var(--f-num); font-size: 10.5px; color: var(--muted); margin-top: 2px; }
+    .vib-spark { width: 100%; height: 34px; overflow: visible; }
+    .vib-spark polyline {
+      fill: none;
+      stroke: var(--amber);
+      stroke-width: 2;
+      stroke-linejoin: round;
+      stroke-linecap: round;
+      vector-effect: non-scaling-stroke;
+    }
+    .kpi.vib strong { font-size: 22px; color: var(--amber); }
+    .kpi.vib.stale strong, .kpi.vib.stale .vib-spark polyline { opacity: .45; }
+
     .kpi {
       padding: 10px 11px;
       border-radius: 14px;
@@ -517,6 +548,16 @@
           <small>Maschinenlaufzeit</small>
           <strong id="runtime">00:00:00</strong>
         </div>
+        <div class="kpi vib">
+          <div class="vib-head">
+            <small>Vibration · P-101 <em>OPC UA</em></small>
+            <span class="vib-meta" id="vib-time">warte auf Werte …</span>
+          </div>
+          <svg class="vib-spark" viewBox="0 0 120 34" preserveAspectRatio="none" aria-hidden="true">
+            <polyline id="vib-line" points="" />
+          </svg>
+          <strong id="vib-value">–</strong>
+        </div>
       </div>
 
       <div class="order">
@@ -561,6 +602,7 @@
     const BASE_TOPIC = params.get('topic')  || 'lf7/zwischenlager-emirhantlc';
     const TOPIC_SCAN  = BASE_TOPIC + '/scan';
     const TOPIC_DATEN = BASE_TOPIC + '/daten';
+    const TOPIC_VIB   = BASE_TOPIC + '/vibration';
 
     const $ = id => document.getElementById(id);
     const overlay      = $('overlay');
@@ -606,7 +648,7 @@
 
       mqttClient.on('connect', () => {
         setMqttState('', 'MQTT · Online');
-        mqttClient.subscribe(TOPIC_DATEN, { qos: 1 });
+        mqttClient.subscribe([TOPIC_DATEN, TOPIC_VIB], { qos: 1 });
       });
       mqttClient.on('reconnect', () => setMqttState('wait', 'MQTT · verbinde …'));
       mqttClient.on('offline',   () => setMqttState('off',  'MQTT · Offline'));
@@ -616,14 +658,49 @@
       });
 
       mqttClient.on('message', (topic, message) => {
-        if (topic !== TOPIC_DATEN) return;
         try {
-          applyData(JSON.parse(message.toString()));
+          const data = JSON.parse(message.toString());
+          if (topic === TOPIC_DATEN) applyData(data);
+          if (topic === TOPIC_VIB)   applyVibration(data);
         } catch (e) {
-          console.warn('Ungültige Daten von Node-RED:', message.toString());
+          console.warn('Ungültige Daten von Node-RED:', topic, message.toString());
         }
       });
     }
+
+    /* ---------- Vibration (OPC UA -> Node-RED -> MQTT) ---------- */
+    const vibHistory = [];
+    let vibLastAt = 0;
+
+    function applyVibration(d) {
+      const value = Number(d.value);
+      if (!Number.isFinite(value)) return;
+
+      vibLastAt = Date.now();
+      vibHistory.push(value);
+      if (vibHistory.length > 40) vibHistory.shift();
+
+      $('vib-value').textContent = value.toFixed(3) + (d.unit ? ' ' + d.unit : '');
+      $('vib-time').textContent = 'aktualisiert ' +
+        new Date(d.timestamp || Date.now()).toLocaleTimeString('de-DE', timeFmt);
+      document.querySelector('.kpi.vib').classList.remove('stale');
+
+      // Mini-Verlauf der letzten 40 Werte
+      const min = Math.min(...vibHistory), max = Math.max(...vibHistory);
+      const span = (max - min) || 1;
+      const step = vibHistory.length > 1 ? 120 / (vibHistory.length - 1) : 0;
+      $('vib-line').setAttribute('points', vibHistory
+        .map((v, i) => `${(i * step).toFixed(1)},${(31 - ((v - min) / span) * 28).toFixed(1)}`)
+        .join(' '));
+    }
+
+    // Wenn 10 s keine Werte kommen, Kachel ausgrauen
+    setInterval(() => {
+      if (vibLastAt && Date.now() - vibLastAt > 10000) {
+        document.querySelector('.kpi.vib').classList.add('stale');
+        $('vib-time').textContent = 'keine neuen Werte';
+      }
+    }, 2000);
 
     function sendScan(event) {
       if (!mqttClient || !mqttClient.connected) return false;
@@ -667,7 +744,7 @@
         : 'Node-RED';
 
       if (markerIsActive) {
-        eyebrow.textContent = 'Marker erkannt · Live von Node-RED';
+        eyebrow.textContent = 'HIRO · live von Node-RED';
         scanHint.textContent = 'Daten von Node-RED geladen';
       }
     }
