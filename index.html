@@ -547,68 +547,45 @@
   </div>
 
   <script>
-    const overlay = document.getElementById('overlay');
-    const hiroMarker = document.getElementById('hiro-marker');
-    const scanFrame = document.getElementById('scan-frame');
-    const scanHint = document.getElementById('scan-hint');
-    const scannerState = document.getElementById('scanner-state');
-    const scannerText = document.getElementById('scanner-text');
-    const scanCountText = document.getElementById('scan-count');
-    const scanCountBox = document.getElementById('scan-count-box');
-    const lastSeen = document.getElementById('last-seen');
-
-    let markerFoundCount = 0;
-    let lostTimer = null;
-    let cameraStopped = false;
-    let markerIsActive = false;
-
-    function randomInt(min, max) {
-      return Math.floor(Math.random() * (max - min + 1)) + min;
-    }
-
-    function randomChoice(list) {
-      return list[Math.floor(Math.random() * list.length)];
-    }
-
-    function generateBalls() {
-      const colors = ['Blau', 'Rot', 'Grün'];
-      const counts = {
-        Blau: randomInt(0, 5),
-        Rot: randomInt(0, 5),
-        Grün: randomInt(0, 5)
-      };
-
-      if (counts.Blau + counts.Rot + counts.Grün === 0) {
-        counts[randomChoice(colors)] = randomInt(1, 5);
-      }
-
-      return Object.entries(counts)
-        .filter(([, count]) => count > 0)
-        .map(([color, count]) => `${count}× ${color}`)
-        .join(', ');
-    }
-
     /* =========================================================
-       MQTT über WebSockets
-       Die App sendet an einen öffentlichen Broker (wss = verschlüsselt),
-       Node-RED abonniert dasselbe Topic. So braucht es keine direkte
-       Verbindung zwischen Handy und Pi im Schul-WLAN.
+       Datenfluss (Node-RED ist die einzige Datenquelle):
+
+       App ──scan──▶  <topic>/scan   ──▶ Node-RED erzeugt Auftrag
+       App ◀──────── <topic>/daten   ◀── Node-RED sendet Werte (retain)
+
+       Die App zeigt NUR an, was über MQTT/WebSocket ankommt –
+       also exakt dieselben Werte wie im Node-RED-Debug.
        ========================================================= */
-    const params = new URLSearchParams(location.search);
+    const params     = new URLSearchParams(location.search);
     const MQTT_URL   = params.get('broker') || 'wss://broker.hivemq.com:8884/mqtt';
-    const MQTT_TOPIC = params.get('topic')  || 'lf7/ar-zwischenlager/team1';   // <- für euer Team eindeutig machen!
+    const BASE_TOPIC = params.get('topic')  || 'lf7/zwischenlager-emirhantlc';
+    const TOPIC_SCAN  = BASE_TOPIC + '/scan';
+    const TOPIC_DATEN = BASE_TOPIC + '/daten';
 
-    const mqttState = document.getElementById('mqtt-state');
-    let mqttClient = null;
+    const $ = id => document.getElementById(id);
+    const overlay      = $('overlay');
+    const hiroMarker   = $('hiro-marker');
+    const scanFrame    = $('scan-frame');
+    const scanHint     = $('scan-hint');
+    const scannerState = $('scanner-state');
+    const scannerText  = $('scanner-text');
+    const mqttState    = $('mqtt-state');
+    const eyebrow      = document.querySelector('#overlay .eyebrow');
 
-    // aktueller Auftrag als Objekt (wird an Node-RED gesendet)
-    const state = {
-      palletCount: 0,
-      palletNumber: '',
-      orderNumber: '',
-      order: { dose: 'Weiß', deckel: '', kugeln: '' }
-    };
+    const CLIENT_ID = 'ar-zl-' + Math.random().toString(16).slice(2, 10);
 
+    let mqttClient     = null;
+    let lostTimer      = null;
+    let waitTimer      = null;
+    let cameraStopped  = false;
+    let markerIsActive = false;
+    let machineStart   = null;   // kommt von Node-RED
+    let lastData       = null;   // letzte Nachricht von Node-RED
+
+    const COLORS = { 'Blau': '#3b82f6', 'Rot': '#ef4444', 'Grün': '#22c55e', 'Weiß': '#f4f4f5' };
+    const timeFmt = { hour: '2-digit', minute: '2-digit', second: '2-digit' };
+
+    /* ---------- MQTT ---------- */
     function setMqttState(cls, text) {
       mqttState.className = 'chip glass online ' + cls;
       mqttState.innerHTML = '<span class="dot"></span>' + text;
@@ -621,7 +598,7 @@
       }
 
       mqttClient = mqtt.connect(MQTT_URL, {
-        clientId: 'ar-zl-' + Math.random().toString(16).slice(2, 10),
+        clientId: CLIENT_ID,
         clean: true,
         reconnectPeriod: 3000,
         connectTimeout: 8000
@@ -629,7 +606,7 @@
 
       mqttClient.on('connect', () => {
         setMqttState('', 'MQTT · Online');
-        publish('connected');
+        mqttClient.subscribe(TOPIC_DATEN, { qos: 1 });
       });
       mqttClient.on('reconnect', () => setMqttState('wait', 'MQTT · verbinde …'));
       mqttClient.on('offline',   () => setMqttState('off',  'MQTT · Offline'));
@@ -637,147 +614,121 @@
         console.warn('MQTT-Fehler:', err);
         setMqttState('off', 'MQTT · Fehler');
       });
+
+      mqttClient.on('message', (topic, message) => {
+        if (topic !== TOPIC_DATEN) return;
+        try {
+          applyData(JSON.parse(message.toString()));
+        } catch (e) {
+          console.warn('Ungültige Daten von Node-RED:', message.toString());
+        }
+      });
     }
 
-    function publish(event) {
-      if (!mqttClient || !mqttClient.connected) return;
-
-      const runtimeSeconds = Math.max(0, Math.floor((Date.now() - machineStart) / 1000));
-
-      const payload = {
-        event,                                   // connected | markerFound | markerLost | newOrder | heartbeat
-        markerActive: markerIsActive,
-        palletCount: state.palletCount,
-        palletNumber: state.palletNumber,
-        orderNumber: state.orderNumber,
-        order: state.order,
-        machineStart: new Date(machineStart).toISOString(),
-        runtime: formatDuration(runtimeSeconds),
-        runtimeSeconds,
-        scanCount: markerFoundCount,
+    function sendScan(event) {
+      if (!mqttClient || !mqttClient.connected) return false;
+      mqttClient.publish(TOPIC_SCAN, JSON.stringify({
+        event,                       // markerFound | markerLost
+        marker: 'hiro',
+        clientId: CLIENT_ID,
         timestamp: new Date().toISOString()
-      };
-
-      mqttClient.publish(MQTT_TOPIC, JSON.stringify(payload), { qos: 1 });
+      }), { qos: 1 });
+      return true;
     }
 
-    function loadRandomOrder() {
-      state.palletCount  = randomInt(4, 20);
-      state.palletNumber = String(randomInt(1, 9999)).padStart(4, '0');
-      state.orderNumber  = 'AUF-' + String(randomInt(1, 99999)).padStart(5, '0');
-      state.order = {
-        dose: 'Weiß',
-        deckel: randomChoice(['Blau','Rot','Grün']),
-        kugeln: generateBalls()
-      };
-
-      document.getElementById('pallet-count').textContent  = state.palletCount;
-      document.getElementById('pallet-number').textContent = state.palletNumber;
-      document.getElementById('order-number').textContent  = state.orderNumber;
-      renderOrder();
-    }
-
-    const COLORS = { 'Blau': '#3b82f6', 'Rot': '#ef4444', 'Grün': '#22c55e', 'Weiß': '#f4f4f5' };
-
+    /* ---------- Anzeige ---------- */
     function tag(color, label, count) {
       return `<span class="tag"><i style="background:${COLORS[color] || '#999'}"></i>` +
              (count ? `<b>${count}×</b> ` : '') + `${label}</span>`;
     }
 
-    function renderOrder() {
-      const balls = state.order.kugeln.split(', ').map(part => {
-        const [count, color] = part.split('× ');
-        return tag(color, color, count);
-      }).join('');
+    function applyData(d) {
+      lastData = d;
+      clearTimeout(waitTimer);
 
-      document.getElementById('order-text').innerHTML =
-        `<dt>Dose</dt><dd>${tag(state.order.dose, state.order.dose)}</dd>` +
-        `<dt>Deckel</dt><dd>${tag(state.order.deckel, state.order.deckel)}</dd>` +
+      $('order-number').textContent   = d.orderNumber ?? '–';
+      $('pallet-number').textContent  = d.palletNumber ?? '–';
+      $('pallet-count').textContent   = d.palletCount ?? '–';
+      $('scan-count-box').textContent = d.scanCount ?? 0;
+      $('scan-count').textContent     = 'Erkennungen: ' + (d.scanCount ?? 0);
+
+      machineStart = d.machineStart ? new Date(d.machineStart).getTime() : null;
+      updateRuntime();
+
+      const o = d.order || {};
+      const balls = (o.kugeln || []).map(k => tag(k.farbe, k.farbe, k.anzahl)).join('') || '–';
+      $('order-text').innerHTML =
+        `<dt>Dose</dt><dd>${o.dose ? tag(o.dose, o.dose) : '–'}</dd>` +
+        `<dt>Deckel</dt><dd>${o.deckel ? tag(o.deckel, o.deckel) : '–'}</dd>` +
         `<dt>Kugeln</dt><dd>${balls}</dd>`;
+
+      $('last-seen').textContent = d.timestamp
+        ? 'Node-RED · ' + new Date(d.timestamp).toLocaleTimeString('de-DE', timeFmt)
+        : 'Node-RED';
+
+      if (markerIsActive) {
+        eyebrow.textContent = 'Marker erkannt · Live von Node-RED';
+        scanHint.textContent = 'Daten von Node-RED geladen';
+      }
     }
-
-    const savedStart = Number(localStorage.getItem('zlMachineStartV6'));
-    const machineStart =
-      Number.isFinite(savedStart) && savedStart > 0
-        ? savedStart
-        : Date.now() - randomInt(20 * 60, 8 * 60 * 60) * 1000;
-
-    localStorage.setItem('zlMachineStartV6', String(machineStart));
 
     function formatDuration(seconds) {
       const h = Math.floor(seconds / 3600);
       const m = Math.floor((seconds % 3600) / 60);
       const s = seconds % 60;
-
-      return [h,m,s].map(value => String(value).padStart(2,'0')).join(':');
+      return [h, m, s].map(v => String(v).padStart(2, '0')).join(':');
     }
 
     function updateRuntime() {
-      const seconds = Math.max(0, Math.floor((Date.now() - machineStart) / 1000));
-
-      document.getElementById('runtime').textContent = formatDuration(seconds);
-      document.getElementById('started').textContent =
-        new Date(machineStart).toLocaleTimeString('de-DE', {
-          hour:'2-digit',
-          minute:'2-digit',
-          second:'2-digit'
-        });
-    }
-
-    function showMarker() {
-      /*
-        Solange derselbe Marker noch vor der Kamera ist, werden keine
-        neuen Testdaten erzeugt. Kurze AR.js-Aussetzer ändern also nichts.
-      */
-      clearTimeout(lostTimer);
-
-      if (markerIsActive) {
-        overlay.style.display = 'block';
-        scanFrame.classList.add('found');
-        scannerState.classList.add('ready');
-        scannerText.textContent = 'Hiro-Marker erkannt';
-        scanHint.textContent = 'Marker erkannt · Daten bleiben unverändert';
+      if (!machineStart) {
+        $('runtime').textContent = '--:--:--';
+        $('started').textContent = '--:--:--';
         return;
       }
+      const seconds = Math.max(0, Math.floor((Date.now() - machineStart) / 1000));
+      $('runtime').textContent = formatDuration(seconds);
+      $('started').textContent = new Date(machineStart).toLocaleTimeString('de-DE', timeFmt);
+    }
 
-      markerIsActive = true;
-
-      loadRandomOrder();
-      markerFoundCount += 1;
-
-      scanCountText.textContent = 'Erkennungen: ' + markerFoundCount;
-      scanCountBox.textContent = markerFoundCount;
-
-      lastSeen.textContent =
-        'Zuletzt: ' +
-        new Date().toLocaleTimeString('de-DE', {
-          hour:'2-digit',
-          minute:'2-digit',
-          second:'2-digit'
-        });
+    /* ---------- Marker ---------- */
+    function showMarker() {
+      clearTimeout(lostTimer);
 
       overlay.style.display = 'block';
       scanFrame.classList.add('found');
       scannerState.classList.add('ready');
       scannerText.textContent = 'Hiro-Marker erkannt';
-      scanHint.textContent = 'Marker erkannt · Daten geladen';
 
-      publish('markerFound');
+      // Marker ist noch derselbe (kurzer AR.js-Aussetzer) -> keinen neuen Auftrag anfordern
+      if (markerIsActive) return;
+      markerIsActive = true;
+
+      eyebrow.textContent = 'Marker erkannt · warte auf Node-RED …';
+      scanHint.textContent = 'Auftrag wird bei Node-RED angefragt …';
+
+      if (!sendScan('markerFound')) {
+        eyebrow.textContent = 'Marker erkannt · MQTT nicht verbunden';
+        scanHint.textContent = 'Keine MQTT-Verbindung';
+        return;
+      }
+
+      clearTimeout(waitTimer);
+      waitTimer = setTimeout(() => {
+        eyebrow.textContent = 'Keine Antwort von Node-RED';
+        scanHint.textContent = 'Läuft der Flow in Node-RED?';
+      }, 5000);
     }
 
     function hideMarker() {
       clearTimeout(lostTimer);
 
-      /*
-        Erst wenn der Marker mindestens 1 Sekunde wirklich weg ist,
-        wird der Scanner für einen neuen Auftrag freigegeben.
-        Dadurch führen kurze Erkennungsabbrüche nicht zu neuen Zufallsdaten.
-      */
+      // erst nach 1 s ohne Marker wirklich ausblenden (AR.js flackert manchmal)
       lostTimer = setTimeout(() => {
         markerIsActive = false;
+        clearTimeout(waitTimer);
         overlay.style.display = 'none';
         scanFrame.classList.remove('found');
-        publish('markerLost');
+        sendScan('markerLost');
 
         if (!cameraStopped) {
           scannerState.classList.remove('ready');
@@ -787,28 +738,18 @@
       }, 1000);
     }
 
-    hiroMarker.addEventListener('markerFound', () => {
-      console.debug('Marker found');
-      showMarker();
-    });
+    hiroMarker.addEventListener('markerFound', showMarker);
+    hiroMarker.addEventListener('markerLost', hideMarker);
 
-    hiroMarker.addEventListener('markerLost', () => {
-      console.debug('Marker lost');
-      hideMarker();
-    });
+    window.fireEventMarkerFound = () => hiroMarker.dispatchEvent(new CustomEvent('markerFound'));
+    window.fireEventMarkerLost  = () => hiroMarker.dispatchEvent(new CustomEvent('markerLost'));
 
-    window.fireEventMarkerFound = () => {
-      hiroMarker.dispatchEvent(new CustomEvent('markerFound'));
-    };
-
-    window.fireEventMarkerLost = () => {
-      hiroMarker.dispatchEvent(new CustomEvent('markerLost'));
-    };
-
+    /* ---------- Kamera ---------- */
     function stopCamera() {
       cameraStopped = true;
       markerIsActive = false;
       clearTimeout(lostTimer);
+      clearTimeout(waitTimer);
 
       document.querySelectorAll('video').forEach(video => {
         if (video.srcObject && typeof video.srcObject.getTracks === 'function') {
@@ -823,22 +764,12 @@
       scanHint.textContent = 'Kamera ausgeschaltet';
     }
 
-    function restartCamera() {
-      location.reload();
-    }
+    $('camera-start').addEventListener('click', () => location.reload());
+    $('camera-stop').addEventListener('click', stopCamera);
 
-    document.getElementById('camera-start').addEventListener('click', restartCamera);
-    document.getElementById('camera-stop').addEventListener('click', stopCamera);
-
-    // Keine Startwerte mehr: Daten entstehen erst beim ersten Scan
     updateRuntime();
     setInterval(updateRuntime, 1000);
-
     connectMqtt();
-    // alle 5 Sekunden ein Lebenszeichen – erst nachdem ein Marker gescannt wurde
-    setInterval(() => {
-      if (state.orderNumber) publish('heartbeat');
-    }, 5000);
   </script>
 </body>
 </html>
