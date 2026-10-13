@@ -1,0 +1,8 @@
+[
+  {"id":"ar_tab","type":"tab","label":"AR Zwischenlager (MQTT)","disabled":false,"info":"Empfängt die Daten der AR-App über den öffentlichen HiveMQ-Broker."},
+  {"id":"ar_broker","type":"mqtt-broker","name":"HiveMQ public","broker":"broker.hivemq.com","port":"1883","clientid":"","autoConnect":true,"usetls":false,"protocolVersion":"4","keepalive":"60","cleansession":true,"autoUnsubscribe":true,"birthTopic":"","closeTopic":"","willTopic":""},
+  {"id":"ar_in","type":"mqtt in","z":"ar_tab","name":"AR-App Daten","topic":"lf7/ar-zwischenlager/team1","qos":"1","datatype":"json","broker":"ar_broker","nl":false,"rap":true,"rh":0,"inputs":0,"x":150,"y":120,"wires":[["ar_debug_full","ar_func"]]},
+  {"id":"ar_debug_full","type":"debug","z":"ar_tab","name":"Komplette Nachricht","active":true,"tosidebar":true,"console":false,"tostatus":false,"complete":"payload","targetType":"msg","statusVal":"","statusType":"auto","x":420,"y":80,"wires":[]},
+  {"id":"ar_func","type":"function","z":"ar_tab","name":"Kurzinfo","func":"const p = msg.payload;\nif (p.event === 'heartbeat') {\n    node.status({fill:'green', shape:'dot', text:'Laufzeit ' + p.runtime});\n    return null; // Heartbeats nicht ins Debug schreiben\n}\nmsg.payload = `${p.event} | ${p.orderNumber} | Palette ${p.palletNumber} | Deckel ${p.order.deckel} | Kugeln ${p.order.kugeln} | Paletten im Lager: ${p.palletCount} | Scans: ${p.scanCount}`;\nreturn msg;","outputs":1,"noerr":0,"x":400,"y":160,"wires":[["ar_debug_short"]]},
+  {"id":"ar_debug_short","type":"debug","z":"ar_tab","name":"Kurzinfo","active":true,"tosidebar":true,"console":false,"tostatus":false,"complete":"payload","targetType":"msg","statusVal":"","statusType":"auto","x":600,"y":160,"wires":[]}
+]

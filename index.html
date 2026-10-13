@@ -8,6 +8,8 @@
   <!-- Exakt wie in deinem ursprünglichen Index -->
   <script src="https://aframe.io/releases/1.4.0/aframe.min.js"></script>
   <script src="https://cdn.jsdelivr.net/gh/AR-js-org/AR.js@3.4.5/aframe/build/aframe-ar.min.js"></script>
+  <!-- MQTT-Client für den Browser (verbindet über WebSockets) -->
+  <script src="https://unpkg.com/mqtt@4.3.7/dist/mqtt.min.js"></script>
 
   <style>
     :root {
@@ -245,6 +247,19 @@
       color: #d8ffea;
       font-size: 11px;
       font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .online.off {
+      background: rgba(223,88,88,.14);
+      border-color: rgba(223,88,88,.4);
+      color: #ffdede;
+    }
+
+    .online.wait {
+      background: rgba(201,145,24,.16);
+      border-color: rgba(201,145,24,.45);
+      color: #ffeec7;
     }
 
     .grid {
@@ -369,7 +384,7 @@
           <small>Marker erkannt · HIRO</small>
           <h2>Zwischenlager</h2>
         </div>
-        <div class="online">Status · Online</div>
+        <div class="online wait" id="mqtt-state">MQTT · verbinde …</div>
       </div>
 
       <div class="grid">
@@ -466,16 +481,94 @@
         .join(', ');
     }
 
+    /* =========================================================
+       MQTT über WebSockets
+       Die App sendet an einen öffentlichen Broker (wss = verschlüsselt),
+       Node-RED abonniert dasselbe Topic. So braucht es keine direkte
+       Verbindung zwischen Handy und Pi im Schul-WLAN.
+       ========================================================= */
+    const params = new URLSearchParams(location.search);
+    const MQTT_URL   = params.get('broker') || 'wss://broker.hivemq.com:8884/mqtt';
+    const MQTT_TOPIC = params.get('topic')  || 'lf7/ar-zwischenlager/team1';   // <- für euer Team eindeutig machen!
+
+    const mqttState = document.getElementById('mqtt-state');
+    let mqttClient = null;
+
+    // aktueller Auftrag als Objekt (wird an Node-RED gesendet)
+    const state = {
+      palletCount: 0,
+      palletNumber: '',
+      orderNumber: '',
+      order: { dose: 'Weiß', deckel: '', kugeln: '' }
+    };
+
+    function setMqttState(cls, text) {
+      mqttState.className = 'online ' + cls;
+      mqttState.textContent = text;
+    }
+
+    function connectMqtt() {
+      if (typeof mqtt === 'undefined') {
+        setMqttState('off', 'MQTT · Bibliothek fehlt');
+        return;
+      }
+
+      mqttClient = mqtt.connect(MQTT_URL, {
+        clientId: 'ar-zl-' + Math.random().toString(16).slice(2, 10),
+        clean: true,
+        reconnectPeriod: 3000,
+        connectTimeout: 8000
+      });
+
+      mqttClient.on('connect', () => {
+        setMqttState('', 'MQTT · Online');
+        publish('connected');
+      });
+      mqttClient.on('reconnect', () => setMqttState('wait', 'MQTT · verbinde …'));
+      mqttClient.on('offline',   () => setMqttState('off',  'MQTT · Offline'));
+      mqttClient.on('error', err => {
+        console.warn('MQTT-Fehler:', err);
+        setMqttState('off', 'MQTT · Fehler');
+      });
+    }
+
+    function publish(event) {
+      if (!mqttClient || !mqttClient.connected) return;
+
+      const runtimeSeconds = Math.max(0, Math.floor((Date.now() - machineStart) / 1000));
+
+      const payload = {
+        event,                                   // connected | markerFound | markerLost | newOrder | heartbeat
+        markerActive: markerIsActive,
+        palletCount: state.palletCount,
+        palletNumber: state.palletNumber,
+        orderNumber: state.orderNumber,
+        order: state.order,
+        machineStart: new Date(machineStart).toISOString(),
+        runtime: formatDuration(runtimeSeconds),
+        runtimeSeconds,
+        scanCount: markerFoundCount,
+        timestamp: new Date().toISOString()
+      };
+
+      mqttClient.publish(MQTT_TOPIC, JSON.stringify(payload), { qos: 1 });
+    }
+
     function loadRandomOrder() {
-      document.getElementById('pallet-count').textContent = randomInt(4, 20);
-      document.getElementById('pallet-number').textContent =
-        String(randomInt(1, 9999)).padStart(4, '0');
+      state.palletCount  = randomInt(4, 20);
+      state.palletNumber = String(randomInt(1, 9999)).padStart(4, '0');
+      state.orderNumber  = 'AUF-' + String(randomInt(1, 99999)).padStart(5, '0');
+      state.order = {
+        dose: 'Weiß',
+        deckel: randomChoice(['Blau','Rot','Grün']),
+        kugeln: generateBalls()
+      };
 
-      document.getElementById('order-number').textContent =
-        'AUF-' + String(randomInt(1, 99999)).padStart(5, '0');
-
+      document.getElementById('pallet-count').textContent  = state.palletCount;
+      document.getElementById('pallet-number').textContent = state.palletNumber;
+      document.getElementById('order-number').textContent  = state.orderNumber;
       document.getElementById('order-text').textContent =
-        `Dose: Weiß · Deckel: ${randomChoice(['Blau','Rot','Grün'])} · Kugeln: ${generateBalls()}`;
+        `Dose: ${state.order.dose} · Deckel: ${state.order.deckel} · Kugeln: ${state.order.kugeln}`;
     }
 
     const savedStart = Number(localStorage.getItem('zlMachineStartV6'));
@@ -543,6 +636,8 @@
       scannerState.classList.add('ready');
       scannerText.textContent = 'Hiro-Marker erkannt';
       scanHint.textContent = 'Marker erkannt · Daten geladen';
+
+      publish('markerFound');
     }
 
     function hideMarker() {
@@ -557,6 +652,7 @@
         markerIsActive = false;
         overlay.style.display = 'none';
         scanFrame.classList.remove('found');
+        publish('markerLost');
 
         if (!cameraStopped) {
           scannerState.classList.remove('ready');
@@ -624,11 +720,16 @@
       scannerState.classList.add('ready');
       scannerText.textContent = 'Testdaten geladen';
       scanHint.textContent = 'Neue zufällige Testdaten geladen';
+      publish('newOrder');
     });
 
     loadRandomOrder();
     updateRuntime();
     setInterval(updateRuntime, 1000);
+
+    connectMqtt();
+    // alle 5 Sekunden ein Lebenszeichen mit aktueller Laufzeit
+    setInterval(() => publish('heartbeat'), 5000);
   </script>
 </body>
 </html>
