@@ -42,7 +42,13 @@
       width: 100vw !important;
       height: 100vh !important;
       object-fit: contain !important;
-      transform: scaleX(-1) !important;
+    }
+
+    /* Nur am Laptop/PC (Webcam) spiegeln – am Handy bleibt die Rückkamera normal */
+    @media (hover: hover) and (pointer: fine) {
+      video, canvas {
+        transform: scaleX(-1) !important;
+      }
     }
 
     #hud {
@@ -390,17 +396,17 @@
       <div class="grid">
         <div class="box">
           <small>Paletten im Lager</small>
-          <strong id="pallet-count">12</strong>
+          <strong id="pallet-count">–</strong>
         </div>
 
         <div class="box">
           <small>Paletten-Nr.</small>
-          <strong id="pallet-number">0123</strong>
+          <strong id="pallet-number">–</strong>
         </div>
 
         <div class="box">
           <small>Auftrags-Nr.</small>
-          <strong id="order-number">AUF-00001</strong>
+          <strong id="order-number">–</strong>
         </div>
 
         <div class="box">
@@ -420,7 +426,7 @@
 
         <div class="box order">
           <small>Aktueller Auftrag</small>
-          <strong id="order-text">Dose: Weiß · Deckel: Blau · Kugeln: 3× Blau</strong>
+          <strong id="order-text">–</strong>
         </div>
       </div>
 
@@ -433,9 +439,6 @@
     <div class="controls">
       <button class="primary" id="camera-start">Kamera starten</button>
       <button id="camera-stop">Kamera ausschalten</button>
-      <button id="test-found">Test Marker</button>
-      <button id="random-order">Neue Testdaten</button>
-      <button id="test-lost">Overlay aus</button>
     </div>
   </div>
 
@@ -705,31 +708,15 @@
     document.getElementById('camera-start').addEventListener('click', restartCamera);
     document.getElementById('camera-stop').addEventListener('click', stopCamera);
 
-    document.getElementById('test-found').addEventListener('click', () => {
-      window.fireEventMarkerFound();
-    });
-
-    document.getElementById('test-lost').addEventListener('click', () => {
-      window.fireEventMarkerLost();
-    });
-
-    document.getElementById('random-order').addEventListener('click', () => {
-      loadRandomOrder();
-      overlay.style.display = 'block';
-      scanFrame.classList.add('found');
-      scannerState.classList.add('ready');
-      scannerText.textContent = 'Testdaten geladen';
-      scanHint.textContent = 'Neue zufällige Testdaten geladen';
-      publish('newOrder');
-    });
-
-    loadRandomOrder();
+    // Keine Startwerte mehr: Daten entstehen erst beim ersten Scan
     updateRuntime();
     setInterval(updateRuntime, 1000);
 
     connectMqtt();
-    // alle 5 Sekunden ein Lebenszeichen mit aktueller Laufzeit
-    setInterval(() => publish('heartbeat'), 5000);
+    // alle 5 Sekunden ein Lebenszeichen – erst nachdem ein Marker gescannt wurde
+    setInterval(() => {
+      if (state.orderNumber) publish('heartbeat');
+    }, 5000);
   </script>
 </body>
 </html>
