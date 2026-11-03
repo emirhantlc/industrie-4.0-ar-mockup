@@ -573,6 +573,7 @@
           <div class="vib-head">
             <small>Vibration · P-101 <em>OPC UA</em></small>
             <span class="vib-meta" id="vib-time">warte auf Werte …</span>
+            <span class="vib-meta" id="vib-avg">Ø 5 min (SQLite): –</span>
             <span class="vib-src"><b id="src-ws">WebSocket</b><b id="src-mqtt">MQTT</b></span>
           </div>
           <svg class="vib-spark" viewBox="0 0 120 34" preserveAspectRatio="none" aria-hidden="true">
@@ -812,6 +813,22 @@
       $('src-ws').classList.toggle('on', now - srcSeen.ws < 5000);
       $('src-mqtt').classList.toggle('on', now - srcSeen.mqtt < 5000);
     }
+
+    /* ---------- REST: Durchschnitt der letzten 5 Minuten aus SQLite ---------- */
+    async function loadAverage() {
+      if (apiProblem()) return;
+      try {
+        const res = await fetch(API_BASE + '/api/vibration/durchschnitt');
+        const d = await res.json();
+        $('vib-avg').textContent = res.ok
+          ? 'Ø 5 min (SQLite): ' + d.average.toFixed(3) + ' · ' + d.count + ' Werte'
+          : 'Ø 5 min (SQLite): noch keine Werte';
+      } catch (e) {
+        $('vib-avg').textContent = 'Ø 5 min (SQLite): nicht erreichbar';
+      }
+    }
+    loadAverage();
+    setInterval(loadAverage, 15000);
 
     setInterval(() => {
       updateSources();
