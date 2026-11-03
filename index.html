@@ -160,6 +160,26 @@
     .online.wait .dot { background: var(--amber); box-shadow: 0 0 0 3px var(--amber-soft); }
     .online.off .dot { background: var(--bad); box-shadow: 0 0 0 3px var(--bad-soft); }
 
+    /* antippbarer Chip (Node-RED-Adresse) */
+    .chip.btn {
+      pointer-events: auto;
+      cursor: pointer;
+      color: var(--text);
+      font: 600 12px var(--f-ui);
+    }
+    .chip.btn:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+
+    .vib-src { display: flex; gap: 4px; margin-top: 4px; }
+    .vib-src b {
+      font: 600 9px var(--f-num);
+      letter-spacing: .04em;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: rgba(255,255,255,.08);
+      color: var(--muted);
+    }
+    .vib-src b.on { background: var(--ok-soft); color: var(--ok); }
+
     /* ---------- Scan-Rahmen ---------- */
     #scan-frame {
       position: absolute;
@@ -511,6 +531,7 @@
           <span id="scanner-text">Suche Marker …</span>
         </div>
         <div class="chip glass online wait" id="mqtt-state"><span class="dot"></span>MQTT · verbinde …</div>
+        <button type="button" class="chip glass online off btn" id="api-state"><span class="dot"></span>Node-RED · Adresse fehlt</button>
       </div>
     </div>
 
@@ -552,6 +573,7 @@
           <div class="vib-head">
             <small>Vibration · P-101 <em>OPC UA</em></small>
             <span class="vib-meta" id="vib-time">warte auf Werte …</span>
+            <span class="vib-src"><b id="src-ws">WebSocket</b><b id="src-mqtt">MQTT</b></span>
           </div>
           <svg class="vib-spark" viewBox="0 0 120 34" preserveAspectRatio="none" aria-hidden="true">
             <polyline id="vib-line" points="" />
@@ -589,22 +611,37 @@
 
   <script>
     /* =========================================================
-       Datenfluss (Node-RED ist die einzige Datenquelle):
+       Kommunikation mit Node-RED – drei Wege:
 
-       App ──scan──▶  <topic>/scan   ──▶ Node-RED erzeugt Auftrag
-       App ◀──────── <topic>/daten   ◀── Node-RED sendet Werte (retain)
+       1) REST (Auftrag):      App ──POST /api/auftrag──▶ Node-RED
+                                App ◀── 201 + JSON ─────── Node-RED
+          Anfrage/Antwort, keine dauerhafte Verbindung.
 
-       Die App zeigt NUR an, was über MQTT/WebSocket ankommt –
-       also exakt dieselben Werte wie im Node-RED-Debug.
+       2) WebSocket (Vibration): App ◀══ ws(s)://…/ws/vibration ══ Node-RED
+          Dauerhafte, bidirektionale Punkt-zu-Punkt-Verbindung.
+
+       3) MQTT (Vibration):    App ◀── Broker ◀── Node-RED
+          Publish/Subscribe über HiveMQ, läuft auch ohne direkten Weg zum Pi.
        ========================================================= */
-    const params     = new URLSearchParams(location.search);
+    const params = new URLSearchParams(location.search);
+    const $ = id => document.getElementById(id);
+
+    // Adresse von Node-RED (z. B. https://xyz.trycloudflare.com oder http://10.149.41.233:1880)
+    function loadApiBase() {
+      const fromUrl = params.get('api');
+      if (fromUrl) {
+        try { localStorage.setItem('zlApiBase', fromUrl); } catch (e) {}
+        return fromUrl;
+      }
+      try { return localStorage.getItem('zlApiBase') || ''; } catch (e) { return ''; }
+    }
+    const API_BASE = loadApiBase().replace(/\/+$/, '');
+    const WS_URL   = API_BASE ? API_BASE.replace(/^http/, 'ws') + '/ws/vibration' : '';
+
     const MQTT_URL   = params.get('broker') || 'wss://broker.hivemq.com:8884/mqtt';
     const BASE_TOPIC = params.get('topic')  || 'lf7/zwischenlager-emirhantlc';
-    const TOPIC_SCAN  = BASE_TOPIC + '/scan';
-    const TOPIC_DATEN = BASE_TOPIC + '/daten';
-    const TOPIC_VIB   = BASE_TOPIC + '/vibration';
+    const TOPIC_VIB  = BASE_TOPIC + '/vibration';
 
-    const $ = id => document.getElementById(id);
     const overlay      = $('overlay');
     const hiroMarker   = $('hiro-marker');
     const scanFrame    = $('scan-frame');
@@ -612,69 +649,146 @@
     const scannerState = $('scanner-state');
     const scannerText  = $('scanner-text');
     const mqttState    = $('mqtt-state');
+    const apiState     = $('api-state');
     const eyebrow      = document.querySelector('#overlay .eyebrow');
 
     const CLIENT_ID = 'ar-zl-' + Math.random().toString(16).slice(2, 10);
 
-    let mqttClient     = null;
     let lostTimer      = null;
-    let waitTimer      = null;
     let cameraStopped  = false;
     let markerIsActive = false;
     let machineStart   = null;   // kommt von Node-RED
-    let lastData       = null;   // letzte Nachricht von Node-RED
 
-    const COLORS = { 'Blau': '#3b82f6', 'Rot': '#ef4444', 'Grün': '#22c55e', 'Weiß': '#f4f4f5' };
+    const COLORS  = { 'Blau': '#3b82f6', 'Rot': '#ef4444', 'Grün': '#22c55e', 'Weiß': '#f4f4f5' };
     const timeFmt = { hour: '2-digit', minute: '2-digit', second: '2-digit' };
 
-    /* ---------- MQTT ---------- */
-    function setMqttState(cls, text) {
-      mqttState.className = 'chip glass online ' + cls;
-      mqttState.innerHTML = '<span class="dot"></span>' + text;
+    function setChip(el, cls, text) {
+      el.className = el.className.replace(/\b(wait|off)\b/g, '').trim() + (cls ? ' ' + cls : '');
+      el.innerHTML = '<span class="dot"></span>' + text;
     }
 
-    function connectMqtt() {
-      if (typeof mqtt === 'undefined') {
-        setMqttState('off', 'MQTT · Bibliothek fehlt');
+    /* ---------- Node-RED-Adresse einstellen ---------- */
+    apiState.addEventListener('click', () => {
+      const value = prompt(
+        'Adresse von Node-RED eingeben\n(z. B. https://xyz.trycloudflare.com)',
+        API_BASE || 'https://'
+      );
+      if (value === null) return;
+      try { localStorage.setItem('zlApiBase', value.trim()); } catch (e) {}
+      location.href = location.pathname;   // neu laden ohne ?api=
+    });
+
+    function apiProblem() {
+      if (!API_BASE) return 'Node-RED · Adresse fehlt';
+      if (location.protocol === 'https:' && API_BASE.startsWith('http:')) {
+        return 'Node-RED · braucht https://';
+      }
+      return '';
+    }
+
+    /* ---------- 1) REST: Auftrag anfordern ---------- */
+    async function requestOrder() {
+      const problem = apiProblem();
+      if (problem) {
+        eyebrow.textContent = problem;
+        scanHint.textContent = 'Oben rechts auf „Node-RED“ tippen und Adresse eintragen';
         return;
       }
 
-      mqttClient = mqtt.connect(MQTT_URL, {
+      eyebrow.textContent = 'REST · POST /api/auftrag …';
+      scanHint.textContent = 'Auftrag wird bei Node-RED angefragt …';
+      const t0 = performance.now();
+
+      try {
+        // Body als Text -> "einfache" Anfrage ohne CORS-Preflight
+        const res = await fetch(API_BASE + '/api/auftrag', {
+          method: 'POST',
+          body: JSON.stringify({ marker: 'hiro', clientId: CLIENT_ID, timestamp: new Date().toISOString() })
+        });
+        const ms = Math.round(performance.now() - t0);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+
+        const data = await res.json();
+        applyData(data);
+        setChip(apiState, '', 'REST · ' + res.status + ' · ' + ms + ' ms');
+        eyebrow.textContent = 'HIRO · REST ' + res.status + ' · ' + ms + ' ms';
+        scanHint.textContent = 'Auftrag per REST geladen';
+      } catch (err) {
+        console.warn('REST-Fehler:', err);
+        setChip(apiState, 'off', 'REST · Fehler');
+        eyebrow.textContent = 'REST-Fehler: ' + err.message;
+        scanHint.textContent = 'Node-RED nicht erreichbar – Adresse prüfen';
+      }
+    }
+
+    /* ---------- 2) WebSocket: Vibration live ---------- */
+    let ws = null;
+
+    function connectWebSocket() {
+      if (apiProblem()) { setChip(apiState, 'off', apiProblem()); return; }
+
+      setChip(apiState, 'wait', 'WebSocket · verbinde …');
+      ws = new WebSocket(WS_URL);
+
+      ws.onopen = () => setChip(apiState, '', 'Node-RED · WS verbunden');
+      ws.onmessage = ev => {
+        try { applyVibration(JSON.parse(ev.data), 'ws'); }
+        catch (e) { console.warn('Ungültige WebSocket-Daten:', ev.data); }
+      };
+      ws.onclose = () => {
+        setChip(apiState, 'off', 'WebSocket · getrennt');
+        setTimeout(connectWebSocket, 3000);   // automatisch neu verbinden
+      };
+      ws.onerror = () => ws.close();
+    }
+
+    /* ---------- 3) MQTT: Vibration über Broker ---------- */
+    function connectMqtt() {
+      if (typeof mqtt === 'undefined') {
+        setChip(mqttState, 'off', 'MQTT · Bibliothek fehlt');
+        return;
+      }
+
+      const client = mqtt.connect(MQTT_URL, {
         clientId: CLIENT_ID,
         clean: true,
         reconnectPeriod: 3000,
         connectTimeout: 8000
       });
 
-      mqttClient.on('connect', () => {
-        setMqttState('', 'MQTT · Online');
-        mqttClient.subscribe([TOPIC_DATEN, TOPIC_VIB], { qos: 1 });
+      client.on('connect', () => {
+        setChip(mqttState, '', 'MQTT · Online');
+        client.subscribe(TOPIC_VIB, { qos: 0 });
       });
-      mqttClient.on('reconnect', () => setMqttState('wait', 'MQTT · verbinde …'));
-      mqttClient.on('offline',   () => setMqttState('off',  'MQTT · Offline'));
-      mqttClient.on('error', err => {
+      client.on('reconnect', () => setChip(mqttState, 'wait', 'MQTT · verbinde …'));
+      client.on('offline',   () => setChip(mqttState, 'off',  'MQTT · Offline'));
+      client.on('error', err => {
         console.warn('MQTT-Fehler:', err);
-        setMqttState('off', 'MQTT · Fehler');
+        setChip(mqttState, 'off', 'MQTT · Fehler');
       });
-
-      mqttClient.on('message', (topic, message) => {
-        try {
-          const data = JSON.parse(message.toString());
-          if (topic === TOPIC_DATEN) applyData(data);
-          if (topic === TOPIC_VIB)   applyVibration(data);
-        } catch (e) {
-          console.warn('Ungültige Daten von Node-RED:', topic, message.toString());
-        }
+      client.on('message', (topic, message) => {
+        try { applyVibration(JSON.parse(message.toString()), 'mqtt'); }
+        catch (e) { console.warn('Ungültige MQTT-Daten:', message.toString()); }
       });
     }
 
-    /* ---------- Vibration (OPC UA -> Node-RED -> MQTT) ---------- */
+    /* ---------- Vibration anzeigen (aus WebSocket und/oder MQTT) ---------- */
     const vibHistory = [];
     let vibLastAt = 0;
+    let vibLastKey = '';
+    const srcSeen = { ws: 0, mqtt: 0 };
 
-    function applyVibration(d) {
+    function applyVibration(d, source) {
       const value = Number(d.value);
       if (!Number.isFinite(value)) return;
+
+      srcSeen[source] = Date.now();
+      updateSources();
+
+      // Node-RED schickt denselben Wert über beide Wege -> nur einmal eintragen
+      const key = (d.timestamp || '') + '|' + value;
+      if (key === vibLastKey) return;
+      vibLastKey = key;
 
       vibLastAt = Date.now();
       vibHistory.push(value);
@@ -685,7 +799,6 @@
         new Date(d.timestamp || Date.now()).toLocaleTimeString('de-DE', timeFmt);
       document.querySelector('.kpi.vib').classList.remove('stale');
 
-      // Mini-Verlauf der letzten 40 Werte
       const min = Math.min(...vibHistory), max = Math.max(...vibHistory);
       const span = (max - min) || 1;
       const step = vibHistory.length > 1 ? 120 / (vibHistory.length - 1) : 0;
@@ -694,35 +807,27 @@
         .join(' '));
     }
 
-    // Wenn 10 s keine Werte kommen, Kachel ausgrauen
+    function updateSources() {
+      const now = Date.now();
+      $('src-ws').classList.toggle('on', now - srcSeen.ws < 5000);
+      $('src-mqtt').classList.toggle('on', now - srcSeen.mqtt < 5000);
+    }
+
     setInterval(() => {
+      updateSources();
       if (vibLastAt && Date.now() - vibLastAt > 10000) {
         document.querySelector('.kpi.vib').classList.add('stale');
         $('vib-time').textContent = 'keine neuen Werte';
       }
     }, 2000);
 
-    function sendScan(event) {
-      if (!mqttClient || !mqttClient.connected) return false;
-      mqttClient.publish(TOPIC_SCAN, JSON.stringify({
-        event,                       // markerFound | markerLost
-        marker: 'hiro',
-        clientId: CLIENT_ID,
-        timestamp: new Date().toISOString()
-      }), { qos: 1 });
-      return true;
-    }
-
-    /* ---------- Anzeige ---------- */
+    /* ---------- Auftrag anzeigen ---------- */
     function tag(color, label, count) {
       return `<span class="tag"><i style="background:${COLORS[color] || '#999'}"></i>` +
              (count ? `<b>${count}×</b> ` : '') + `${label}</span>`;
     }
 
     function applyData(d) {
-      lastData = d;
-      clearTimeout(waitTimer);
-
       $('order-number').textContent   = d.orderNumber ?? '–';
       $('pallet-number').textContent  = d.palletNumber ?? '–';
       $('pallet-count').textContent   = d.palletCount ?? '–';
@@ -742,11 +847,6 @@
       $('last-seen').textContent = d.timestamp
         ? 'Node-RED · ' + new Date(d.timestamp).toLocaleTimeString('de-DE', timeFmt)
         : 'Node-RED';
-
-      if (markerIsActive) {
-        eyebrow.textContent = 'HIRO · live von Node-RED';
-        scanHint.textContent = 'Daten von Node-RED geladen';
-      }
     }
 
     function formatDuration(seconds) {
@@ -776,24 +876,11 @@
       scannerState.classList.add('ready');
       scannerText.textContent = 'Hiro-Marker erkannt';
 
-      // Marker ist noch derselbe (kurzer AR.js-Aussetzer) -> keinen neuen Auftrag anfordern
+      // derselbe Marker ist noch da (kurzer AR.js-Aussetzer) -> keinen neuen Auftrag
       if (markerIsActive) return;
       markerIsActive = true;
 
-      eyebrow.textContent = 'Marker erkannt · warte auf Node-RED …';
-      scanHint.textContent = 'Auftrag wird bei Node-RED angefragt …';
-
-      if (!sendScan('markerFound')) {
-        eyebrow.textContent = 'Marker erkannt · MQTT nicht verbunden';
-        scanHint.textContent = 'Keine MQTT-Verbindung';
-        return;
-      }
-
-      clearTimeout(waitTimer);
-      waitTimer = setTimeout(() => {
-        eyebrow.textContent = 'Keine Antwort von Node-RED';
-        scanHint.textContent = 'Läuft der Flow in Node-RED?';
-      }, 5000);
+      requestOrder();
     }
 
     function hideMarker() {
@@ -802,10 +889,8 @@
       // erst nach 1 s ohne Marker wirklich ausblenden (AR.js flackert manchmal)
       lostTimer = setTimeout(() => {
         markerIsActive = false;
-        clearTimeout(waitTimer);
         overlay.style.display = 'none';
         scanFrame.classList.remove('found');
-        sendScan('markerLost');
 
         if (!cameraStopped) {
           scannerState.classList.remove('ready');
@@ -826,7 +911,6 @@
       cameraStopped = true;
       markerIsActive = false;
       clearTimeout(lostTimer);
-      clearTimeout(waitTimer);
 
       document.querySelectorAll('video').forEach(video => {
         if (video.srcObject && typeof video.srcObject.getTracks === 'function') {
@@ -847,6 +931,7 @@
     updateRuntime();
     setInterval(updateRuntime, 1000);
     connectMqtt();
+    connectWebSocket();
   </script>
 </body>
 </html>
