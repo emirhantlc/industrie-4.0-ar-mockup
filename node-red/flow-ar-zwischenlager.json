@@ -4,7 +4,7 @@
   "type": "tab",
   "label": "AR Zwischenlager (REST + WS + MQTT + SQLite)",
   "disabled": false,
-  "info": "Node-RED ist die Datenquelle für die AR-App.\n\n1) REST\n   POST /api/auftrag   -> neuen Auftrag erzeugen (201 + JSON)\n   GET  /api/auftrag   -> letzten Auftrag holen (200 / 404)\n   GET  /api/vibration -> aktuellen Vibrationswert holen\n\n2) OPC UA Vibration (Double) wird verteilt über\n   - WebSocket: ws://<pi>:1880/ws/vibration\n   - MQTT: lf7/zwischenlager-emirhantlc/vibration (HiveMQ)\n\nNutzt die vorhandenen Konfigurationen: MQTT-Broker 'HiveMQ public' (b7433598460a3e82) und Milo-Endpoint (68021f9.ba14de).\n\n3) SQLite\n   Jeder Vibrationswert wird in zwischenlager.db (Tabelle vibration) gespeichert.\n   GET /api/vibration/durchschnitt -> Durchschnitt der letzten 5 Minuten\n   (optional ?minuten=1..60). Werte älter als 7 Tage werden stündlich gelöscht."
+  "info": "Node-RED ist die Datenquelle für die AR-App.\n\n1) REST\n   POST /api/auftrag   -> neuen Auftrag erzeugen (201 + JSON)\n   GET  /api/auftrag   -> letzten Auftrag holen (200 / 404)\n   GET  /api/vibration -> aktuellen Vibrationswert holen\n\n2) OPC UA Vibration (Double) wird verteilt über\n   - WebSocket: ws://<pi>:1880/ws/vibration\n   - MQTT: lf7/zwischenlager-emirhantlc/vibration (HiveMQ)\n\nNutzt die vorhandenen Konfigurationen: MQTT-Broker 'HiveMQ public' (b7433598460a3e82) und Milo-Endpoint (68021f9.ba14de).\n\n3) SQLite\n   Jeder Vibrationswert wird in armockup.db (Tabelle vibration) gespeichert.\n   GET /api/vibration/durchschnitt -> Durchschnitt der letzten 5 Minuten\n   (optional ?minuten=1..60). Werte älter als 7 Tage werden stündlich gelöscht."
  },
  {
   "id": "zl3_c1",
@@ -538,7 +538,7 @@
  {
   "id": "zl3_db",
   "type": "sqlitedb",
-  "db": "zwischenlager.db",
+  "db": "armockup.db",
   "mode": "RWC"
  }
 ]
