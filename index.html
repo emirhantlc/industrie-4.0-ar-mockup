@@ -985,7 +985,17 @@
       if (!el) return;
       el.className = 'log-sync ' + (ok ? 'ok' : 'off');
       el.textContent = text;
+      try { localStorage.setItem('zlLogSync', JSON.stringify({ ok, text })); } catch (e) {}
     }
+
+    // letzten Sende-Status nach dem Neuladen wieder anzeigen
+    try {
+      const last = JSON.parse(localStorage.getItem('zlLogSync') || 'null');
+      if (last && last.text) {
+        const el = document.getElementById('log-sync');
+        if (el) { el.className = 'log-sync ' + (last.ok ? 'ok' : 'off'); el.textContent = last.text; }
+      }
+    } catch (e) {}
 
     async function flush() {
       flushTimer = null;
@@ -1030,8 +1040,13 @@
         dup.t = now;
         logs.splice(logs.indexOf(dup), 1);
         logs.unshift(dup);
+        // Wiederholungen auch melden, aber höchstens alle 30 s (sonst z. B. alle 3 s beim Neuverbinden)
+        if (!noForward && now - (dup.sent || 0) > 30000) {
+          dup.sent = now;
+          forward({ kind: 'log', t: now, level, cat, msg: dup.n > 1 ? msg + ' (×' + dup.n + ')' : msg });
+        }
       } else {
-        logs.unshift({ t: now, level, cat, msg, n: 1 });
+        logs.unshift({ t: now, level, cat, msg, n: 1, sent: noForward ? 0 : now });
         if (logs.length > MAX_LOGS) logs.length = MAX_LOGS;
         if (!noForward) forward({ kind: 'log', t: now, level, cat, msg });
       }
