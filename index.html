@@ -726,10 +726,83 @@
     .empty strong { font-size: 16px; font-weight: 650; }
     .empty span { color: var(--muted); font-size: 14.5px; }
 
+    /* Vibrationskachel darf nie breiter als das Panel werden */
+    .kpi.vib { grid-template-columns: minmax(0, 1fr); }
+    .vib-top { flex-wrap: wrap; row-gap: 6px; }
+    .kpi.vib small { white-space: normal; }
+
+    /* "Neu scannen" unten im Panel, bleibt beim Scrollen sichtbar */
+    .sheet-foot {
+      position: sticky;
+      bottom: 0;
+      z-index: 2;
+      padding: 10px 16px 14px;
+      background: var(--surface);
+      border-top: 1px solid var(--line);
+    }
+    .sheet-rescan {
+      width: 100%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      border: 0;
+      border-radius: 14px;
+      padding: 13px 16px;
+      background: var(--accent);
+      color: #fff;
+      font: 650 15.5px var(--f-ui);
+      cursor: pointer;
+    }
+    .sheet-rescan svg { width: 20px; height: 20px; flex: none; }
+    .sheet-rescan:active { transform: scale(.98); }
+    .sheet-rescan:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+    /* Panel offen: Scanner-Elemente ausblenden, Panel nutzt die Höhe bis zur Menüleiste */
+    #hud[data-sheet="open"] .controls,
+    #hud[data-sheet="open"] #scan-frame,
+    #hud[data-sheet="open"] #scan-hint { display: none; }
+    #hud[data-sheet="open"] #overlay {
+      bottom: calc(86px + var(--safe-b));
+      max-height: calc(100vh - var(--top-h, 130px) - 98px - var(--safe-b));
+      max-height: calc(100dvh - var(--top-h, 130px) - 98px - var(--safe-b));
+    }
+
     @media (max-width: 560px) {
       .brand small { display: none; }
-      .kpi.big strong { font-size: 36px; }
+      .kpi.big strong { font-size: 32px; }
       .controls button { padding: 12px 14px; font-size: 14px; }
+
+      /* Kopfzeile kompakt: Status-Chips nebeneinander, umbrechend */
+      .topbar { left: 8px; right: 8px; top: calc(8px + var(--safe-t)); gap: 8px; }
+      .chips {
+        flex: 1 1 auto;
+        flex-direction: row;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 5px;
+        min-width: 0;
+      }
+      .chip, .chip.btn { padding: 5px 10px; font-size: 12px; gap: 6px; }
+      .chip .dot { width: 7px; height: 7px; }
+
+      #overlay { width: calc(100vw - 16px); border-radius: 20px; }
+      .sheet-head { padding: 14px 14px 12px; }
+      .sheet-head h2 { font-size: 20px; }
+      .sheet-body { padding: 12px 12px 14px; }
+      .kpis { gap: 8px; }
+      .kpi { padding: 10px 12px; }
+      .kpi strong { font-size: 20px; }
+      .kpi.live strong { font-size: 24px; }
+      .kpi.vib strong { font-size: 22px; }
+      .sheet-foot { padding: 10px 12px 12px; }
+    }
+
+    /* sehr schmale Handys: nur das Logo zeigen, Platz für den Status */
+    @media (max-width: 420px) {
+      .brand { padding: 0; background: none; border: 0; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
+      .brand > div:last-child { display: none; }
+      .logo { width: 38px; height: 38px; box-shadow: 0 6px 20px rgba(8,15,30,.25); }
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -837,6 +910,13 @@
           <span id="scan-count">Erkennungen: 0</span>
           <span id="last-seen">Noch nicht erkannt</span>
         </div>
+      </div>
+
+      <div class="sheet-foot">
+        <button type="button" class="sheet-rescan" id="sheet-rescan">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 12h10"/></svg>
+          Neu scannen
+        </button>
       </div>
     </div>
 
@@ -1239,7 +1319,7 @@
       if (found === wasFound) return;
       wasFound = found;
       if (found) addLog('ok', 'Scan', 'Hiro-Marker erkannt');
-      else if ($('scanner-text').textContent.trim() !== 'Kamera ausgeschaltet') addLog('info', 'Scan', 'Marker nicht mehr sichtbar');
+      else if ($('scanner-text').textContent.trim() !== 'Kamera ausgeschaltet') addLog('info', 'Scan', 'Bereit für den nächsten Scan');
     }).observe(frame, { attributes: true, attributeFilter: ['class'] });
 
     watch($('scanner-text'), text => {
@@ -1598,37 +1678,58 @@
     }
 
     /* ---------- Marker ---------- */
+    /* Einmal scannen genügt: Nach dem ersten Erkennen bleibt das Panel offen,
+       auch wenn der Marker aus dem Bild verschwindet. Erst "Neu scannen"
+       gibt den Scanner für den nächsten Auftrag frei.                      */
+    const hudEl = $('hud');
+
+    function setSheetOpen(open) {
+      overlay.style.display = open ? 'block' : 'none';
+      if (open) hudEl.dataset.sheet = 'open';
+      else delete hudEl.dataset.sheet;
+    }
+
     function showMarker() {
       clearTimeout(lostTimer);
+      if (markerIsActive) return;      // Panel ist schon offen -> nichts Neues anfordern
+      markerIsActive = true;
 
-      overlay.style.display = 'block';
+      setSheetOpen(true);
+      overlay.scrollTop = 0;
       scanFrame.classList.add('found');
       scannerState.classList.add('ready');
       scannerText.textContent = 'Hiro-Marker erkannt';
-
-      // derselbe Marker ist noch da (kurzer AR.js-Aussetzer) -> keinen neuen Auftrag
-      if (markerIsActive) return;
-      markerIsActive = true;
 
       requestOrder();
     }
 
     function hideMarker() {
-      clearTimeout(lostTimer);
-
-      // erst nach 1 s ohne Marker wirklich ausblenden (AR.js flackert manchmal)
-      lostTimer = setTimeout(() => {
-        markerIsActive = false;
-        overlay.style.display = 'none';
-        scanFrame.classList.remove('found');
-
-        if (!cameraStopped) {
-          scannerState.classList.remove('ready');
-          scannerText.textContent = 'Suche Marker …';
-          scanHint.textContent = 'Hiro-Marker in den Rahmen halten';
-        }
-      }, 1000);
+      // Marker ist weg: Daten bleiben stehen, nur der Status ändert sich
+      if (markerIsActive && !cameraStopped) scannerText.textContent = 'Daten geladen';
     }
+
+    function rescan() {
+      markerIsActive = false;
+      setSheetOpen(false);
+      scanFrame.classList.remove('found');
+      if (!cameraStopped) {
+        scannerState.classList.remove('ready');
+        scannerText.textContent = 'Suche Marker …';
+        scanHint.textContent = 'Hiro-Marker in den Rahmen halten';
+      }
+    }
+    $('sheet-rescan').addEventListener('click', rescan);
+
+    // Höhe der Kopfzeile merken, damit das Panel genau darunter passt
+    const topbarEl = document.querySelector('.topbar');
+    function measureTopbar() {
+      if (!topbarEl) return;
+      const bottom = Math.ceil(topbarEl.getBoundingClientRect().bottom);
+      if (bottom > 0) document.documentElement.style.setProperty('--top-h', bottom + 'px');
+    }
+    if (topbarEl && 'ResizeObserver' in window) new ResizeObserver(measureTopbar).observe(topbarEl);
+    window.addEventListener('resize', measureTopbar);
+    measureTopbar();
 
     hiroMarker.addEventListener('markerFound', showMarker);
     hiroMarker.addEventListener('markerLost', hideMarker);
@@ -1648,7 +1749,7 @@
         }
       });
 
-      overlay.style.display = 'none';
+      setSheetOpen(false);
       scanFrame.classList.remove('found');
       scannerState.classList.remove('ready');
       scannerText.textContent = 'Kamera ausgeschaltet';
