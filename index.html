@@ -1679,37 +1679,66 @@
     }
 
     /* ---------- Vibrationsalarm ---------- */
-    let alarmOn = false, alarmMuted = false, alarmBeep = null, audioCtx = null;
+    let alarmOn = false, alarmMuted = false, audioCtx = null, siren = null;
+
+    /* Sirene wie beim Luftalarm: Sägezahn-Ton heult langsam zwischen tief und hoch.
+       Läuft ohne Pause, solange der Alarm aktiv ist. Wird im Browser erzeugt. */
+    function startSiren() {
+      if (siren || alarmMuted || !audioCtx || audioCtx.state !== 'running') return;
+      const t = audioCtx.currentTime;
+
+      const osc = audioCtx.createOscillator();      // eigentlicher Ton
+      osc.type = 'sawtooth';
+      osc.frequency.value = 600;
+
+      const lfo = audioCtx.createOscillator();      // lässt die Tonhöhe auf- und abschwellen
+      lfo.type = 'sine';
+      lfo.frequency.value = 0.22;                   // ca. 4,5 s für einmal hoch und runter
+      const lfoDepth = audioCtx.createGain();
+      lfoDepth.gain.value = 320;                    // 280 Hz … 920 Hz
+      lfo.connect(lfoDepth).connect(osc.frequency);
+
+      const filter = audioCtx.createBiquadFilter(); // nimmt die schrillen Obertöne weg
+      filter.type = 'lowpass';
+      filter.frequency.value = 1800;
+
+      const gain = audioCtx.createGain();           // sanft einblenden
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.exponentialRampToValueAtTime(0.22, t + 0.6);
+
+      osc.connect(filter).connect(gain).connect(audioCtx.destination);
+      osc.start(t);
+      lfo.start(t);
+      siren = { osc, lfo, gain };
+    }
+
+    function stopSiren() {
+      if (!siren) return;
+      const { osc, lfo, gain } = siren;
+      siren = null;
+      const t = audioCtx.currentTime;
+      gain.gain.cancelScheduledValues(t);
+      gain.gain.setValueAtTime(Math.max(gain.gain.value, 0.0001), t);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.4);   // sanft ausblenden
+      osc.stop(t + 0.45);
+      lfo.stop(t + 0.45);
+    }
 
     // Ton darf erst nach einer Berührung abgespielt werden (Browser-Regel)
     window.addEventListener('pointerdown', () => {
       try {
         audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
-        if (audioCtx.state === 'suspended') audioCtx.resume();
+        const go = () => { if (alarmOn) startSiren(); };
+        if (audioCtx.state === 'suspended') audioCtx.resume().then(go); else go();
       } catch (e) {}
     }, { passive: true });
-
-    function beep() {
-      if (alarmMuted || !audioCtx || audioCtx.state !== 'running') return;
-      const t = audioCtx.currentTime;
-      [0, 0.25].forEach(offset => {
-        const osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
-        osc.type = 'square';
-        osc.frequency.value = 880;
-        gain.gain.setValueAtTime(0.0001, t + offset);
-        gain.gain.exponentialRampToValueAtTime(0.15, t + offset + 0.02);
-        gain.gain.exponentialRampToValueAtTime(0.0001, t + offset + 0.18);
-        osc.connect(gain).connect(audioCtx.destination);
-        osc.start(t + offset);
-        osc.stop(t + offset + 0.2);
-      });
-    }
 
     function setAlarm(on, value, maxValue, threshold) {
       const tile = document.querySelector('.kpi.vib');
       if (on) {
         $('alarm-detail').textContent =
-          'Aktuell ' + value.toFixed(3) + ' · max ' + maxValue.toFixed(3) + ' · Grenzwert ' + threshold;
+          'Aktuell ' + value.toFixed(3) + ' · max ' + maxValue.toFixed(3) + ' · Grenzwert ' + threshold +
+          (!alarmMuted && !siren ? ' · Tippen für Sirene' : '');
       }
       if (on === alarmOn) return;
       alarmOn = on;
@@ -1719,11 +1748,11 @@
       if (on) $('hud').dataset.alarm = 'on'; else delete $('hud').dataset.alarm;
       $('alarm-state').textContent = on ? 'aktiv' : 'normal';
 
-      clearInterval(alarmBeep);
       if (on) {
-        if (navigator.vibrate) navigator.vibrate([300, 150, 300, 150, 300]);
-        beep();
-        alarmBeep = setInterval(beep, 4000);
+        if (navigator.vibrate) navigator.vibrate([400, 200, 400, 200, 400]);
+        startSiren();
+      } else {
+        stopSiren();
       }
     }
 
@@ -1731,6 +1760,7 @@
       alarmMuted = !alarmMuted;
       $('alarm-mute').setAttribute('aria-pressed', String(alarmMuted));
       $('alarm-mute').textContent = alarmMuted ? 'Ton an' : 'Ton aus';
+      if (alarmMuted) stopSiren(); else if (alarmOn) startSiren();
     });
 
     function updateSources() {
