@@ -1314,6 +1314,7 @@
     const MQTT_URL   = params.get('broker') || 'wss://broker.hivemq.com:8884/mqtt';
     const BASE_TOPIC = params.get('topic')  || 'lf7/zwischenlager-emirhantlc';
     const TOPIC_VIB  = BASE_TOPIC + '/vibration';
+    const TOPIC_API  = BASE_TOPIC + '/api';
 
     const overlay      = $('overlay');
     const hiroMarker   = $('hiro-marker');
@@ -1432,6 +1433,7 @@
       client.on('connect', () => {
         setChip(mqttState, '', 'MQTT · Online');
         client.subscribe(TOPIC_VIB, { qos: 0 });
+        client.subscribe(TOPIC_API, { qos: 1 });   // aktuelle Tunnel-Adresse vom Pi
       });
       client.on('reconnect', () => setChip(mqttState, 'wait', 'MQTT · verbinde …'));
       client.on('offline',   () => setChip(mqttState, 'off',  'MQTT · Offline'));
@@ -1440,9 +1442,28 @@
         setChip(mqttState, 'off', 'MQTT · Fehler');
       });
       client.on('message', (topic, message) => {
+        if (topic === TOPIC_API) { applyAnnouncedApi(message.toString()); return; }
         try { applyVibration(JSON.parse(message.toString()), 'mqtt'); }
         catch (e) { console.warn('Ungültige MQTT-Daten:', message.toString()); }
       });
+    }
+
+    /* ---------- Node-RED-Adresse automatisch übernehmen ----------
+       tunnel.sh auf dem Pi meldet die Tunnel-Adresse per MQTT (retain).
+       Ist sie neu, speichert die App sie und lädt einmal neu.            */
+    function applyAnnouncedApi(raw) {
+      let url = raw.trim();
+      try { const j = JSON.parse(raw); if (j && j.url) url = String(j.url).trim(); } catch (e) {}
+      url = url.replace(/\/+$/, '');
+
+      // nur echte Cloudflare-Tunnel-Adressen annehmen
+      if (!/^https:\/\/[a-z0-9-]+\.trycloudflare\.com$/.test(url)) return;
+      if (params.get('api')) return;            // manuell per Link gesetzt -> nicht überschreiben
+      if (url === API_BASE) return;              // schon aktuell
+
+      try { localStorage.setItem('zlApiBase', url); } catch (e) { return; }
+      setChip(apiState, 'wait', 'Node-RED · neue Adresse, lade neu …');
+      setTimeout(() => location.reload(), 800);
     }
 
     /* ---------- Vibration anzeigen (aus WebSocket und/oder MQTT) ---------- */
@@ -1511,9 +1532,14 @@
     }, 2000);
 
     /* ---------- Auftrag anzeigen ---------- */
+    // Werte von außen nie ungeprüft als HTML einsetzen
+    const escHtml = s => String(s).replace(/[&<>"']/g, c =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
     function tag(color, label, count) {
+      const n = Number(count);
       return `<span class="tag"><i style="background:${COLORS[color] || '#999'}"></i>` +
-             (count ? `<b>${count}×</b> ` : '') + `${label}</span>`;
+             (Number.isFinite(n) && n > 0 ? `<b>${n}×</b> ` : '') + `${escHtml(label)}</span>`;
     }
 
     function applyData(d) {
