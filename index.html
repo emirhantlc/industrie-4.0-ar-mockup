@@ -605,6 +605,10 @@
     .page-head h2 { margin: 0; font-size: 28px; font-weight: 650; letter-spacing: -.02em; line-height: 1.15; }
     .page-head p { margin: 3px 0 0; color: var(--muted); font-size: 14.5px; }
     .page-actions { display: flex; gap: 6px; flex: none; }
+    .page-head p.log-sync { font-size: 12.5px; display: flex; align-items: flex-start; gap: 6px; }
+    .page-head p.log-sync::before { content: ""; flex: none; width: 7px; height: 7px; margin-top: 6px; border-radius: 50%; background: var(--muted); }
+    .page-head p.log-sync.ok::before { background: var(--ok); }
+    .page-head p.log-sync.off::before { background: var(--bad); }
 
     .btn-soft {
       border: 0;
@@ -853,6 +857,7 @@
         <div>
           <h2>Logs</h2>
           <p id="log-sub">Ereignisse der App</p>
+          <p class="log-sync" id="log-sync">Node-RED · noch nicht gesendet</p>
         </div>
         <div class="page-actions">
           <button type="button" class="btn-soft" id="log-copy">Kopieren</button>
@@ -940,8 +945,83 @@
     let errors = load(LS_ERR);
     let logFilter = 'all';
 
+    /* ---------- Weiterleitung an Node-RED: POST /api/logs ----------
+       Neue Logs, neue Fehler und behobene Fehler werden gesammelt und
+       gebündelt an Node-RED geschickt (Fehler nach 0,5 s, sonst alle 5 s).
+       Node-RED speichert sie in SQLite (Tabelle app_logs).            */
+    let deviceId = '';
+    try { deviceId = localStorage.getItem('zlDeviceId') || ''; } catch (e) {}
+    if (!deviceId) {
+      deviceId = 'handy-' + Math.random().toString(36).slice(2, 8);
+      try { localStorage.setItem('zlDeviceId', deviceId); } catch (e) {}
+    }
+
+    function apiBase() {
+      let base = new URLSearchParams(location.search).get('api');
+      if (!base) { try { base = localStorage.getItem('zlApiBase'); } catch (e) {} }
+      base = (base || '').trim().replace(/\/+$/, '');
+      if (!/^https?:\/\//.test(base)) return '';
+      if (location.protocol === 'https:' && base.startsWith('http:')) return '';   // würde blockiert
+      return base;
+    }
+
+    const outbox = [];
+    let flushTimer = null, sending = false;
+
+    function forward(entry) {
+      outbox.push(Object.assign({ device: deviceId }, entry));
+      if (outbox.length > MAX_LOGS) outbox.splice(0, outbox.length - MAX_LOGS);
+      schedule(entry.kind === 'log' ? 5000 : 500);
+    }
+
+    function schedule(ms) {
+      if (flushTimer && ms >= 5000) return;    // es ist schon ein Senden geplant
+      clearTimeout(flushTimer);
+      flushTimer = setTimeout(flush, ms);
+    }
+
+    function setSync(ok, text) {
+      const el = document.getElementById('log-sync');
+      if (!el) return;
+      el.className = 'log-sync ' + (ok ? 'ok' : 'off');
+      el.textContent = text;
+    }
+
+    async function flush() {
+      flushTimer = null;
+      if (sending || !outbox.length) return;
+      const base = apiBase();
+      if (!base) { setSync(false, 'Node-RED · keine https-Adresse, Logs bleiben lokal'); return; }
+
+      const batch = outbox.splice(0, 50);
+      sending = true;
+      try {
+        // Text-Body -> einfache Anfrage ohne CORS-Preflight
+        const res = await fetch(base + '/api/logs', { method: 'POST', body: JSON.stringify(batch), keepalive: true });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        setSync(true, 'Node-RED · ' + batch.length + ' gesendet um ' +
+          new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+      } catch (e) {
+        outbox.unshift.apply(outbox, batch);       // nichts verlieren, später erneut
+        setSync(false, 'Node-RED · Senden fehlgeschlagen, ' + outbox.length + ' warten');
+        sending = false;
+        schedule(15000);
+        return;
+      }
+      sending = false;
+      if (outbox.length) schedule(1000);
+    }
+
+    // beim Schließen/Wechseln der App den Rest noch abschicken
+    window.addEventListener('pagehide', () => {
+      const base = apiBase();
+      if (base && outbox.length && navigator.sendBeacon) {
+        if (navigator.sendBeacon(base + '/api/logs', JSON.stringify(outbox.splice(0, 50)))) outbox.length = 0;
+      }
+    });
+
     /* ---------- Logs ---------- */
-    function addLog(level, cat, msg) {
+    function addLog(level, cat, msg, noForward) {
       const now = Date.now();
       // gleiche Meldung in kurzer Zeit (z. B. Wiederverbinden alle 3 s) -> zusammenfassen statt zumüllen
       const dup = logs.slice(0, 8).find(l => l.msg === msg && l.cat === cat && now - l.t < 120000);
@@ -953,6 +1033,7 @@
       } else {
         logs.unshift({ t: now, level, cat, msg, n: 1 });
         if (logs.length > MAX_LOGS) logs.length = MAX_LOGS;
+        if (!noForward) forward({ kind: 'log', t: now, level, cat, msg });
       }
       save(LS_LOGS, logs);
       renderLogs();
@@ -984,18 +1065,22 @@
         errors.splice(errors.indexOf(e), 1);
       } else {
         e = { key, title, detail, hint, count: 1, first: now, last: now, resolved: false };
+        forward({ kind: 'error', t: now, level: 'error', cat, msg: title, detail, key });
         if (errors.length >= MAX_ERR) errors.length = MAX_ERR - 1;
       }
       errors.unshift(e);
       save(LS_ERR, errors);
       renderErrors();
-      addLog('error', cat, title);
+      addLog('error', cat, title, true);
     }
 
     function resolveError(key) {
       let changed = false;
       errors.forEach(e => {
-        if (e.key === key && !e.resolved) { e.resolved = true; e.resolvedAt = Date.now(); changed = true; }
+        if (e.key === key && !e.resolved) {
+          e.resolved = true; e.resolvedAt = Date.now(); changed = true;
+          forward({ kind: 'resolve', t: e.resolvedAt, level: 'ok', cat: 'System', msg: 'Behoben: ' + e.title, key });
+        }
       });
       if (changed) { save(LS_ERR, errors); renderErrors(); }
     }

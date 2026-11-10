@@ -4,7 +4,7 @@
   "type": "tab",
   "label": "AR Zwischenlager (REST + WS + MQTT + SQLite)",
   "disabled": false,
-  "info": "Node-RED ist die Datenquelle für die AR-App.\n\n1) REST\n   POST /api/auftrag   -> neuen Auftrag erzeugen (201 + JSON)\n   GET  /api/auftrag   -> letzten Auftrag holen (200 / 404)\n   GET  /api/vibration -> aktuellen Vibrationswert holen\n\n2) OPC UA Vibration (Double) wird verteilt über\n   - WebSocket: ws://<pi>:1880/ws/vibration\n   - MQTT: lf7/zwischenlager-emirhantlc/vibration (HiveMQ)\n\nNutzt die vorhandenen Konfigurationen: MQTT-Broker 'HiveMQ public' (b7433598460a3e82) und Milo-Endpoint (68021f9.ba14de).\n\n3) SQLite\n   Jeder Vibrationswert wird in /home/piadmin/armockup.db (Tabelle vibration) gespeichert.\n   GET /api/vibration/durchschnitt -> Durchschnitt der letzten 5 Minuten\n   (optional ?minuten=1..60). Werte älter als 7 Tage werden stündlich gelöscht."
+  "info": "Node-RED ist die Datenquelle für die AR-App.\n\n1) REST\n   POST /api/auftrag   -> neuen Auftrag erzeugen (201 + JSON)\n   GET  /api/auftrag   -> letzten Auftrag holen (200 / 404)\n   GET  /api/vibration -> aktuellen Vibrationswert holen\n\n2) OPC UA Vibration (Double) wird verteilt über\n   - WebSocket: ws://<pi>:1880/ws/vibration\n   - MQTT: lf7/zwischenlager-emirhantlc/vibration (HiveMQ)\n\nNutzt die vorhandenen Konfigurationen: MQTT-Broker 'HiveMQ public' (b7433598460a3e82) und Milo-Endpoint (68021f9.ba14de).\n\n3) SQLite\n   Jeder Vibrationswert wird in /home/piadmin/armockup.db (Tabelle vibration) gespeichert.\n   GET /api/vibration/durchschnitt -> Durchschnitt der letzten 5 Minuten\n   (optional ?minuten=1..60). Werte älter als 7 Tage werden stündlich gelöscht.\n\n4) App-Logs\n   POST /api/logs          -> Logs/Fehler der App speichern (Tabelle app_logs)\n   GET  /api/logs          -> letzte Einträge (?limit=1..500, ?kind=log|error|resolve, ?device=...)\n   GET  /api/fehler/aktiv  -> Fehler, die noch nicht behoben sind (pro Handy)\n   Einträge älter als 30 Tage werden stündlich gelöscht."
  },
  {
   "id": "zl3_c1",
@@ -344,7 +344,7 @@
   "crontab": "",
   "once": true,
   "onceDelay": "0.5",
-  "topic": "CREATE TABLE IF NOT EXISTS vibration (\n  id      INTEGER PRIMARY KEY AUTOINCREMENT,\n  ts      INTEGER NOT NULL,\n  value   REAL    NOT NULL,\n  node_id TEXT\n);\nCREATE INDEX IF NOT EXISTS idx_vibration_ts ON vibration(ts);",
+  "topic": "CREATE TABLE IF NOT EXISTS vibration (\n  id      INTEGER PRIMARY KEY AUTOINCREMENT,\n  ts      INTEGER NOT NULL,\n  value   REAL    NOT NULL,\n  node_id TEXT\n);\nCREATE INDEX IF NOT EXISTS idx_vibration_ts ON vibration(ts);\nCREATE TABLE IF NOT EXISTS app_logs (\n  id        INTEGER PRIMARY KEY AUTOINCREMENT,\n  ts        INTEGER NOT NULL,   -- Zeitpunkt in der App (ms)\n  received  INTEGER NOT NULL,   -- Eingang bei Node-RED (ms)\n  device    TEXT    NOT NULL,   -- Kennung des Handys\n  kind      TEXT    NOT NULL,   -- log | error | resolve\n  level     TEXT,               -- info | ok | warn | error\n  category  TEXT,               -- Scan | Verbindung | Daten | System\n  message   TEXT    NOT NULL,\n  detail    TEXT,\n  error_key TEXT                -- z. B. mqtt, ws, rest\n);\nCREATE INDEX IF NOT EXISTS idx_app_logs_ts ON app_logs(ts);\nCREATE INDEX IF NOT EXISTS idx_app_logs_kind ON app_logs(kind, device, error_key);",
   "x": 190,
   "y": 600,
   "wires": [
@@ -374,7 +374,7 @@
   "type": "function",
   "z": "zl3_tab",
   "name": "DB bereit",
-  "func": "node.status({ fill: 'green', shape: 'dot', text: 'Tabelle vibration bereit' });\nreturn null;",
+  "func": "node.status({ fill: 'green', shape: 'dot', text: 'Tabellen vibration + app_logs bereit' });\nreturn null;",
   "outputs": 1,
   "noerr": 0,
   "x": 620,
@@ -517,7 +517,8 @@
   "y": 760,
   "wires": [
    [
-    "zl3_db_clean"
+    "zl3_db_clean",
+    "zl3_logs_clean"
    ]
   ]
  },
@@ -540,5 +541,227 @@
   "type": "sqlitedb",
   "db": "/home/piadmin/armockup.db",
   "mode": "RWC"
+ },
+ {
+  "id": "zl3_c4",
+  "type": "comment",
+  "z": "zl3_tab",
+  "name": "4) App-Logs und Fehlermeldungen speichern (SQLite: app_logs)",
+  "info": "",
+  "x": 270,
+  "y": 840,
+  "wires": []
+ },
+ {
+  "id": "zl3_logs_in",
+  "type": "http in",
+  "z": "zl3_tab",
+  "name": "POST /api/logs",
+  "url": "/api/logs",
+  "method": "post",
+  "upload": false,
+  "swaggerDoc": "",
+  "x": 140,
+  "y": 900,
+  "wires": [
+   [
+    "zl3_logs_check"
+   ]
+  ]
+ },
+ {
+  "id": "zl3_logs_check",
+  "type": "function",
+  "z": "zl3_tab",
+  "name": "Logs prüfen und aufteilen",
+  "func": "msg.headers = {\n    'Access-Control-Allow-Origin': '*',\n    'Content-Type': 'application/json; charset=utf-8',\n    'Cache-Control': 'no-store'\n};\n// Body kommt als Text (JSON-Array) von der App\nlet list = msg.payload;\ntry { if (typeof list === 'string') list = JSON.parse(list); } catch (e) { list = null; }\nif (!Array.isArray(list)) list = list && typeof list === 'object' ? [list] : null;\n\nif (!list) {\n    msg.statusCode = 400;   // Bad Request\n    msg.payload = { error: 'Erwartet wird ein JSON-Array mit Log-Einträgen' };\n    return [msg, null];\n}\n\nconst KINDS = ['log', 'error', 'resolve'];\nconst LEVELS = ['info', 'ok', 'warn', 'error'];\nconst cut = (v, n) => v == null ? null : String(v).slice(0, n);\nconst received = Date.now();\n\nconst inserts = list.slice(0, 100)\n    .filter(e => e && KINDS.includes(e.kind) && e.msg)\n    .map(e => ({\n        params: {\n            $ts: Number.isFinite(Number(e.t)) ? Number(e.t) : received,\n            $received: received,\n            $device: cut(e.device || 'unbekannt', 40),\n            $kind: e.kind,\n            $level: LEVELS.includes(e.level) ? e.level : 'info',\n            $category: cut(e.cat, 30),\n            $message: cut(e.msg, 300),\n            $detail: cut(e.detail, 1000),\n            $errorKey: cut(e.key, 40)\n        },\n        kind: e.kind\n    }));\n\nif (inserts.length === 0) {\n    msg.statusCode = 400;\n    msg.payload = { error: 'Keine gültigen Einträge (kind und msg fehlen)', ignored: list.length };\n    return [msg, null];\n}\n\nconst errors = inserts.filter(i => i.kind === 'error').length;\nnode.status({ fill: errors ? 'red' : 'green', shape: 'dot',\n    text: inserts.length + ' gespeichert' + (errors ? ', ' + errors + ' Fehler' : '') });\n\nmsg.statusCode = 200;\nmsg.payload = { stored: inserts.length, ignored: list.length - inserts.length };\n\n// Ausgang 1: Antwort an die App, Ausgang 2: ein INSERT pro Eintrag\nreturn [msg, inserts];",
+  "outputs": 2,
+  "noerr": 0,
+  "x": 380,
+  "y": 900,
+  "wires": [
+   [
+    "zl3_resp"
+   ],
+   [
+    "zl3_logs_insert",
+    "zl3_logs_err_filter"
+   ]
+  ]
+ },
+ {
+  "id": "zl3_logs_insert",
+  "type": "sqlite",
+  "z": "zl3_tab",
+  "mydb": "zl3_db",
+  "sqlquery": "prepared",
+  "sql": "INSERT INTO app_logs (ts, received, device, kind, level, category, message, detail, error_key)\nVALUES ($ts, $received, $device, $kind, $level, $category, $message, $detail, $errorKey)",
+  "name": "INSERT app_logs",
+  "x": 640,
+  "y": 920,
+  "wires": [
+   []
+  ]
+ },
+ {
+  "id": "zl3_logs_err_filter",
+  "type": "function",
+  "z": "zl3_tab",
+  "name": "nur Fehler",
+  "func": "if (msg.kind !== 'error') return null;\nmsg.payload = msg.params.$device + ' · ' + msg.params.$message + (msg.params.$detail ? ' – ' + msg.params.$detail : '');\nreturn msg;",
+  "outputs": 1,
+  "noerr": 0,
+  "x": 620,
+  "y": 960,
+  "wires": [
+   [
+    "zl3_logs_err_dbg"
+   ]
+  ]
+ },
+ {
+  "id": "zl3_logs_err_dbg",
+  "type": "debug",
+  "z": "zl3_tab",
+  "name": "Fehler aus der App",
+  "active": true,
+  "tosidebar": true,
+  "console": false,
+  "tostatus": false,
+  "complete": "payload",
+  "targetType": "msg",
+  "statusVal": "",
+  "statusType": "auto",
+  "x": 820,
+  "y": 960,
+  "wires": []
+ },
+ {
+  "id": "zl3_logs_get_in",
+  "type": "http in",
+  "z": "zl3_tab",
+  "name": "GET /api/logs",
+  "url": "/api/logs",
+  "method": "get",
+  "upload": false,
+  "swaggerDoc": "",
+  "x": 140,
+  "y": 1040,
+  "wires": [
+   [
+    "zl3_logs_get_params"
+   ]
+  ]
+ },
+ {
+  "id": "zl3_logs_get_params",
+  "type": "function",
+  "z": "zl3_tab",
+  "name": "Filter festlegen",
+  "func": "const q = msg.req.query;\nlet limit = parseInt(q.limit, 10);\nif (!Number.isFinite(limit)) limit = 50;\nlimit = Math.min(500, Math.max(1, limit));\n\nmsg.params = {\n    $limit: limit,\n    $kind: ['log', 'error', 'resolve'].includes(q.kind) ? q.kind : null,\n    $device: q.device ? String(q.device).slice(0, 40) : null\n};\nreturn msg;",
+  "outputs": 1,
+  "noerr": 0,
+  "x": 360,
+  "y": 1040,
+  "wires": [
+   [
+    "zl3_logs_select"
+   ]
+  ]
+ },
+ {
+  "id": "zl3_logs_select",
+  "type": "sqlite",
+  "z": "zl3_tab",
+  "mydb": "zl3_db",
+  "sqlquery": "prepared",
+  "sql": "SELECT id, ts, received, device, kind, level, category, message, detail, error_key\nFROM app_logs\nWHERE ($kind IS NULL OR kind = $kind)\n  AND ($device IS NULL OR device = $device)\nORDER BY id DESC\nLIMIT $limit",
+  "name": "SELECT app_logs",
+  "x": 570,
+  "y": 1040,
+  "wires": [
+   [
+    "zl3_logs_get_format"
+   ]
+  ]
+ },
+ {
+  "id": "zl3_logs_get_format",
+  "type": "function",
+  "z": "zl3_tab",
+  "name": "Antwort bauen",
+  "func": "msg.headers = {\n    'Access-Control-Allow-Origin': '*',\n    'Content-Type': 'application/json; charset=utf-8',\n    'Cache-Control': 'no-store'\n};\nmsg.statusCode = 200;\nmsg.payload = (msg.payload || []).map(r => Object.assign(r, {\n    time: new Date(r.ts).toISOString()\n}));\nreturn msg;",
+  "outputs": 1,
+  "noerr": 0,
+  "x": 780,
+  "y": 1040,
+  "wires": [
+   [
+    "zl3_resp"
+   ]
+  ]
+ },
+ {
+  "id": "zl3_active_in",
+  "type": "http in",
+  "z": "zl3_tab",
+  "name": "GET /api/fehler/aktiv",
+  "url": "/api/fehler/aktiv",
+  "method": "get",
+  "upload": false,
+  "swaggerDoc": "",
+  "x": 160,
+  "y": 1100,
+  "wires": [
+   [
+    "zl3_active_select"
+   ]
+  ]
+ },
+ {
+  "id": "zl3_active_select",
+  "type": "sqlite",
+  "z": "zl3_tab",
+  "mydb": "zl3_db",
+  "sqlquery": "fixed",
+  "sql": "-- pro Handy und Fehlerart: letzter Fehler, der danach nicht behoben wurde\nSELECT e.device,\n       e.error_key,\n       e.message   AS title,\n       e.detail,\n       COUNT(*)    AS count,\n       MIN(e.ts)   AS first_ts,\n       MAX(e.ts)   AS last_ts\nFROM app_logs e\nWHERE e.kind = 'error'\n  AND e.ts > COALESCE((SELECT MAX(r.ts) FROM app_logs r\n                       WHERE r.kind = 'resolve'\n                         AND r.device = e.device\n                         AND r.error_key = e.error_key), 0)\nGROUP BY e.device, e.error_key\nORDER BY last_ts DESC",
+  "name": "SELECT aktive Fehler",
+  "x": 400,
+  "y": 1100,
+  "wires": [
+   [
+    "zl3_active_format"
+   ]
+  ]
+ },
+ {
+  "id": "zl3_active_format",
+  "type": "function",
+  "z": "zl3_tab",
+  "name": "Antwort bauen",
+  "func": "msg.headers = {\n    'Access-Control-Allow-Origin': '*',\n    'Content-Type': 'application/json; charset=utf-8',\n    'Cache-Control': 'no-store'\n};\nconst rows = (msg.payload || []).map(r => Object.assign(r, {\n    first: new Date(r.first_ts).toISOString(),\n    last: new Date(r.last_ts).toISOString()\n}));\nmsg.statusCode = 200;\nmsg.payload = { active: rows.length, errors: rows };\nnode.status({ fill: rows.length ? 'red' : 'green', shape: 'dot', text: rows.length + ' aktive Fehler' });\nreturn msg;",
+  "outputs": 1,
+  "noerr": 0,
+  "x": 620,
+  "y": 1100,
+  "wires": [
+   [
+    "zl3_resp"
+   ]
+  ]
+ },
+ {
+  "id": "zl3_logs_clean",
+  "type": "sqlite",
+  "z": "zl3_tab",
+  "mydb": "zl3_db",
+  "sqlquery": "fixed",
+  "sql": "DELETE FROM app_logs WHERE ts < (strftime('%s','now') - 30*24*3600) * 1000",
+  "name": "Logs > 30 Tage löschen",
+  "x": 420,
+  "y": 800,
+  "wires": [
+   []
+  ]
  }
 ]
