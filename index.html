@@ -987,19 +987,28 @@
       el.textContent = text;
     }
 
+    // REST, wenn eine Adresse da ist, sonst (oder wenn REST scheitert) MQTT
+    async function sendBatch(batch) {
+      const base = apiBase();
+      if (base) {
+        try {
+          // Text-Body -> einfache Anfrage ohne CORS-Preflight
+          const res = await fetch(base + '/api/logs', { method: 'POST', body: JSON.stringify(batch), keepalive: true });
+          if (res.ok) return 'REST';
+        } catch (e) {}
+      }
+      if (window.zlMqttLogs && window.zlMqttLogs(batch)) return 'MQTT';
+      throw new Error('keine Verbindung');
+    }
+
     async function flush() {
       flushTimer = null;
       if (sending || !outbox.length) return;
-      const base = apiBase();
-      if (!base) { setSync(false, 'Node-RED · keine https-Adresse, Logs bleiben lokal'); return; }
-
       const batch = outbox.splice(0, 50);
       sending = true;
       try {
-        // Text-Body -> einfache Anfrage ohne CORS-Preflight
-        const res = await fetch(base + '/api/logs', { method: 'POST', body: JSON.stringify(batch), keepalive: true });
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-        setSync(true, 'Node-RED · ' + batch.length + ' gesendet um ' +
+        const via = await sendBatch(batch);
+        setSync(true, 'Node-RED · ' + batch.length + ' per ' + via + ' gesendet um ' +
           new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
       } catch (e) {
         outbox.unshift.apply(outbox, batch);       // nichts verlieren, später erneut
@@ -1014,10 +1023,11 @@
 
     // beim Schließen/Wechseln der App den Rest noch abschicken
     window.addEventListener('pagehide', () => {
+      if (!outbox.length) return;
       const base = apiBase();
-      if (base && outbox.length && navigator.sendBeacon) {
-        if (navigator.sendBeacon(base + '/api/logs', JSON.stringify(outbox.splice(0, 50)))) outbox.length = 0;
-      }
+      const batch = outbox.slice(0, 50);
+      if (base && navigator.sendBeacon && navigator.sendBeacon(base + '/api/logs', JSON.stringify(batch))) outbox.length = 0;
+      else if (window.zlMqttLogs && window.zlMqttLogs(batch)) outbox.length = 0;
     });
 
     /* ---------- Logs ---------- */
@@ -1202,6 +1212,14 @@
         'Die App läuft über https, die Node-RED-Adresse beginnt aber mit http. Der Browser blockiert solche Anfragen.',
         'Eine https-Adresse verwenden, zum Beispiel über einen Cloudflare-Tunnel.');
       else if (/WS verbunden/.test(text)) { addLog('ok', 'Verbindung', 'WebSocket verbunden, Vibration live'); resolveError('ws'); resolveError('api-config'); }
+      else if (/über MQTT/.test(text)) { addLog('info', 'Verbindung', 'Node-RED läuft über MQTT (ohne Tunnel)'); resolveError('api-config'); }
+      else if ((m = /^MQTT · Auftrag · (\d+) ms/.exec(text))) {
+        addLog('ok', 'Daten', 'Auftrag per MQTT geladen (' + m[1] + ' ms)');
+        resolveError('order'); resolveError('rest');
+      }
+      else if (/keine Antwort/.test(text)) reportError('order', 'Daten', 'Keine Antwort von Node-RED',
+        'Der Auftrag wurde per MQTT angefragt, Node-RED hat nicht innerhalb von 6 Sekunden geantwortet.',
+        'Prüfen, ob Node-RED läuft, mit dem Broker verbunden ist und der Flow deployt ist.');
       else if (/WebSocket · verbinde/.test(text)) addLog('info', 'Verbindung', 'WebSocket verbindet …');
       else if (/WebSocket · getrennt/.test(text)) reportError('ws', 'Verbindung', 'WebSocket getrennt',
         'Die Live-Verbindung zu Node-RED ist unterbrochen. Die App versucht alle 3 Sekunden, sich neu zu verbinden.',
@@ -1315,6 +1333,9 @@
     const BASE_TOPIC = params.get('topic')  || 'lf7/zwischenlager-emirhantlc';
     const TOPIC_VIB  = BASE_TOPIC + '/vibration';
     const TOPIC_API  = BASE_TOPIC + '/api';
+    const TOPIC_SCAN = BASE_TOPIC + '/scan';            // App -> Node-RED: Auftrag anfordern
+    const TOPIC_AVG  = BASE_TOPIC + '/durchschnitt';    // Node-RED -> App: Ø 5 min aus SQLite
+    const TOPIC_LOGS = BASE_TOPIC + '/logs';            // App -> Node-RED: Logs/Fehler
 
     const overlay      = $('overlay');
     const hiroMarker   = $('hiro-marker');
@@ -1327,6 +1348,8 @@
     const eyebrow      = document.querySelector('#overlay .eyebrow');
 
     const CLIENT_ID = 'ar-zl-' + Math.random().toString(16).slice(2, 10);
+    const TOPIC_REPLY = BASE_TOPIC + '/daten/' + CLIENT_ID;   // Antwort nur für dieses Handy
+    let mqttClient = null;
 
     let lostTimer      = null;
     let cameraStopped  = false;
@@ -1362,12 +1385,8 @@
 
     /* ---------- 1) REST: Auftrag anfordern ---------- */
     async function requestOrder() {
-      const problem = apiProblem();
-      if (problem) {
-        eyebrow.textContent = problem;
-        scanHint.textContent = 'Oben rechts auf „Node-RED“ tippen und Adresse eintragen';
-        return;
-      }
+      // ohne (https-)Adresse von Node-RED: Auftrag über MQTT anfordern
+      if (apiProblem()) { requestOrderMqtt(); return; }
 
       eyebrow.textContent = 'REST · POST /api/auftrag …';
       scanHint.textContent = 'Auftrag wird bei Node-RED angefragt …';
@@ -1388,18 +1407,55 @@
         eyebrow.textContent = 'HIRO · REST ' + res.status + ' · ' + ms + ' ms';
         scanHint.textContent = 'Auftrag per REST geladen';
       } catch (err) {
+        // REST nicht erreichbar (z. B. Tunnel aus) -> automatisch über MQTT versuchen
         console.warn('REST-Fehler:', err);
-        setChip(apiState, 'off', 'REST · Fehler');
-        eyebrow.textContent = 'REST-Fehler: ' + err.message;
-        scanHint.textContent = 'Node-RED nicht erreichbar – Adresse prüfen';
+        requestOrderMqtt();
       }
+    }
+
+    /* ---------- 1b) MQTT: Auftrag anfordern (ohne Tunnel) ----------
+       App -> …/scan  {event, clientId}
+       App <- …/daten/<clientId>  Auftrag als JSON                     */
+    let orderTimer = null, orderT0 = 0;
+
+    function requestOrderMqtt() {
+      if (!mqttClient || !mqttClient.connected) {
+        setChip(apiState, 'off', 'Node-RED · keine Antwort (MQTT offline)');
+        eyebrow.textContent = 'MQTT nicht verbunden';
+        scanHint.textContent = 'Internetverbindung prüfen';
+        return;
+      }
+      eyebrow.textContent = 'MQTT · Auftrag wird angefragt …';
+      scanHint.textContent = 'Auftrag wird bei Node-RED angefragt …';
+      orderT0 = performance.now();
+      mqttClient.publish(TOPIC_SCAN, JSON.stringify({
+        event: 'markerFound', marker: 'hiro', clientId: CLIENT_ID, timestamp: new Date().toISOString()
+      }), { qos: 1 });
+
+      clearTimeout(orderTimer);
+      orderTimer = setTimeout(() => {
+        setChip(apiState, 'off', 'Node-RED · keine Antwort (MQTT)');
+        eyebrow.textContent = 'Keine Antwort von Node-RED';
+        scanHint.textContent = 'Läuft Node-RED und ist der Flow deployt?';
+      }, 6000);
+    }
+
+    function applyOrderMqtt(raw) {
+      let data;
+      try { data = JSON.parse(raw); } catch (e) { console.warn('Ungültige MQTT-Daten:', raw); return; }
+      clearTimeout(orderTimer);
+      const ms = Math.round(performance.now() - orderT0);
+      applyData(data);
+      setChip(apiState, '', 'MQTT · Auftrag · ' + ms + ' ms');
+      eyebrow.textContent = 'HIRO · per MQTT · ' + ms + ' ms';
+      scanHint.textContent = 'Auftrag per MQTT geladen';
     }
 
     /* ---------- 2) WebSocket: Vibration live ---------- */
     let ws = null;
 
     function connectWebSocket() {
-      if (apiProblem()) { setChip(apiState, 'off', apiProblem()); return; }
+      if (apiProblem()) { setChip(apiState, '', 'Node-RED · über MQTT'); return; }
 
       setChip(apiState, 'wait', 'WebSocket · verbinde …');
       ws = new WebSocket(WS_URL);
@@ -1423,7 +1479,7 @@
         return;
       }
 
-      const client = mqtt.connect(MQTT_URL, {
+      const client = mqttClient = mqtt.connect(MQTT_URL, {
         clientId: CLIENT_ID,
         clean: true,
         reconnectPeriod: 3000,
@@ -1434,6 +1490,7 @@
         setChip(mqttState, '', 'MQTT · Online');
         client.subscribe(TOPIC_VIB, { qos: 0 });
         client.subscribe(TOPIC_API, { qos: 1 });   // aktuelle Tunnel-Adresse vom Pi
+        client.subscribe([TOPIC_REPLY, TOPIC_AVG], { qos: 1 });
       });
       client.on('reconnect', () => setChip(mqttState, 'wait', 'MQTT · verbinde …'));
       client.on('offline',   () => setChip(mqttState, 'off',  'MQTT · Offline'));
@@ -1442,11 +1499,20 @@
         setChip(mqttState, 'off', 'MQTT · Fehler');
       });
       client.on('message', (topic, message) => {
-        if (topic === TOPIC_API) { applyAnnouncedApi(message.toString()); return; }
+        if (topic === TOPIC_API)   { applyAnnouncedApi(message.toString()); return; }
+        if (topic === TOPIC_REPLY) { applyOrderMqtt(message.toString()); return; }
+        if (topic === TOPIC_AVG)   { applyAverage(message.toString()); return; }
         try { applyVibration(JSON.parse(message.toString()), 'mqtt'); }
         catch (e) { console.warn('Ungültige MQTT-Daten:', message.toString()); }
       });
     }
+
+    // für das Logs-Modul: Logs ohne Tunnel über MQTT an Node-RED schicken
+    window.zlMqttLogs = batch => {
+      if (!mqttClient || !mqttClient.connected) return false;
+      mqttClient.publish(TOPIC_LOGS, JSON.stringify(batch), { qos: 1 });
+      return true;
+    };
 
     /* ---------- Node-RED-Adresse automatisch übernehmen ----------
        tunnel.sh auf dem Pi meldet die Tunnel-Adresse per MQTT (retain).
@@ -1508,6 +1574,15 @@
     }
 
     /* ---------- REST: Durchschnitt der letzten 5 Minuten aus SQLite ---------- */
+    function applyAverage(raw) {
+      try {
+        const d = JSON.parse(raw);
+        $('vib-avg').textContent = Number.isFinite(Number(d.average))
+          ? 'Ø 5 min (SQLite): ' + Number(d.average).toFixed(3) + ' · ' + d.count + ' Werte'
+          : 'Ø 5 min (SQLite): noch keine Werte';
+      } catch (e) { console.warn('Ungültige MQTT-Daten:', raw); }
+    }
+
     async function loadAverage() {
       if (apiProblem()) return;
       try {
