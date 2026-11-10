@@ -4,7 +4,7 @@
   "type": "tab",
   "label": "AR Zwischenlager (REST + WS + MQTT + SQLite)",
   "disabled": false,
-  "info": "Node-RED ist die Datenquelle für die AR-App.\n\n1) REST\n   POST /api/auftrag   -> neuen Auftrag erzeugen (201 + JSON)\n   GET  /api/auftrag   -> letzten Auftrag holen (200 / 404)\n   GET  /api/vibration -> aktuellen Vibrationswert holen\n\n2) OPC UA Vibration (Double) wird verteilt über\n   - WebSocket: ws://<pi>:1880/ws/vibration\n   - MQTT: lf7/zwischenlager-emirhantlc/vibration (HiveMQ)\n\nNutzt die vorhandenen Konfigurationen: MQTT-Broker 'HiveMQ public' (b7433598460a3e82) und Milo-Endpoint (68021f9.ba14de).\n\n3) SQLite\n   Jeder Vibrationswert wird in /home/piadmin/armockup.db (Tabelle vibration) gespeichert.\n   GET /api/vibration/durchschnitt -> Durchschnitt der letzten 5 Minuten\n   (optional ?minuten=1..60). Werte älter als 7 Tage werden stündlich gelöscht.\n\n4) App-Logs\n   POST /api/logs          -> Logs/Fehler der App speichern (Tabelle app_logs)\n   GET  /api/logs          -> letzte Einträge (?limit=1..500, ?kind=log|error|resolve, ?device=...)\n   GET  /api/fehler/aktiv  -> Fehler, die noch nicht behoben sind (pro Handy)\n   Einträge älter als 30 Tage werden stündlich gelöscht."
+  "info": "Node-RED ist die Datenquelle für die AR-App.\n\n1) REST\n   POST /api/auftrag   -> neuen Auftrag erzeugen (201 + JSON)\n   GET  /api/auftrag   -> letzten Auftrag holen (200 / 404)\n   GET  /api/vibration -> aktuellen Vibrationswert holen\n\n2) OPC UA Vibration (Double) wird verteilt über\n   - WebSocket: ws://<pi>:1880/ws/vibration\n   - MQTT: lf7/zwischenlager-emirhantlc/vibration (HiveMQ)\n\nNutzt die vorhandenen Konfigurationen: MQTT-Broker 'HiveMQ public' (b7433598460a3e82) und Milo-Endpoint (68021f9.ba14de).\n\n3) SQLite\n   Jeder Vibrationswert wird in /home/piadmin/armockup.db (Tabelle vibration) gespeichert.\n   GET /api/vibration/durchschnitt -> Durchschnitt der letzten 5 Minuten\n   (optional ?minuten=1..60). Werte älter als 7 Tage werden stündlich gelöscht.\n\n4) App-Logs\n   POST /api/logs          -> Logs/Fehler der App speichern (Tabelle app_logs)\n   GET  /api/logs          -> letzte Einträge (?limit=1..500, ?kind=log|error|resolve, ?device=...)\n   GET  /api/fehler/aktiv  -> Fehler, die noch nicht behoben sind (pro Handy)\n   Einträge älter als 30 Tage werden stündlich gelöscht.\n\n5) Vibrationsalarm\n   Alarm beginnt, wenn ein Wert über 3 liegt, und endet, sobald er wieder auf 2,9 oder darunter fällt.\n   Jede Vibrationsnachricht enthält alarm (true/false) und threshold.\n   MQTT lf7/zwischenlager-emirhantlc/alarm  -> aktueller Alarmzustand (retain)\n   SQLite Tabelle vib_alarms (Beginn, Ende, Höchstwert)\n   GET /api/alarme -> aktueller Zustand + letzte 20 Alarme"
  },
  {
   "id": "zl3_c1",
@@ -253,17 +253,14 @@
   "type": "function",
   "z": "zl3_tab",
   "name": "Vibration extrahieren",
-  "func": "// Bestätigung des Abos ignorieren\nif (msg.topic === 'subscriptionId') return null;\n\n// Wert kann je nach Version direkt oder als DataValue kommen\nlet v = msg.payload;\nif (v && typeof v === 'object') {\n    v = (v.value && typeof v.value === 'object') ? v.value.value : v.value;\n}\nv = Number(v);\nif (!Number.isFinite(v)) return null;\n\nflow.set('vibration', v);\nnode.status({ fill: 'yellow', shape: 'dot', text: v.toFixed(3) });\n\nmsg.topic = 'lf7/zwischenlager-emirhantlc/vibration';\nmsg.payload = {\n    value: v,\n    unit: '',\n    nodeId: 'ns=2;s=Demo.Alarms.Plant.PowerHouse.P-101.Vibration',\n    timestamp: new Date().toISOString()\n};\nreturn msg;",
+  "func": "// Bestätigung des Abos ignorieren\nif (msg.topic === 'subscriptionId') return null;\n\n// Wert kann je nach Version direkt oder als DataValue kommen\nlet v = msg.payload;\nif (v && typeof v === 'object') {\n    v = (v.value && typeof v.value === 'object') ? v.value.value : v.value;\n}\nv = Number(v);\nif (!Number.isFinite(v)) return null;\n\nflow.set('vibration', v);\nnode.status({ fill: 'yellow', shape: 'dot', text: v.toFixed(3) });\n\nmsg.topic = 'lf7/zwischenlager-emirhantlc/vibration';\nmsg.payload = {\n    value: v,\n    unit: '',\n    nodeId: msg.test ? 'TEST' : 'ns=2;s=Demo.Alarms.Plant.PowerHouse.P-101.Vibration',\n    timestamp: new Date().toISOString()\n};\nreturn msg;",
   "outputs": 1,
   "noerr": 0,
   "x": 810,
   "y": 400,
   "wires": [
    [
-    "zl3_vib_ws",
-    "zl3_vib_mqtt",
-    "zl3_vib_dbg",
-    "zl3_db_insert_fn"
+    "zl3_alarm_check"
    ]
   ]
  },
@@ -344,7 +341,7 @@
   "crontab": "",
   "once": true,
   "onceDelay": "0.5",
-  "topic": "CREATE TABLE IF NOT EXISTS vibration (\n  id      INTEGER PRIMARY KEY AUTOINCREMENT,\n  ts      INTEGER NOT NULL,\n  value   REAL    NOT NULL,\n  node_id TEXT\n);\nCREATE INDEX IF NOT EXISTS idx_vibration_ts ON vibration(ts);\nCREATE TABLE IF NOT EXISTS app_logs (\n  id        INTEGER PRIMARY KEY AUTOINCREMENT,\n  ts        INTEGER NOT NULL,   -- Zeitpunkt in der App (ms)\n  received  INTEGER NOT NULL,   -- Eingang bei Node-RED (ms)\n  device    TEXT    NOT NULL,   -- Kennung des Handys\n  kind      TEXT    NOT NULL,   -- log | error | resolve\n  level     TEXT,               -- info | ok | warn | error\n  category  TEXT,               -- Scan | Verbindung | Daten | System\n  message   TEXT    NOT NULL,\n  detail    TEXT,\n  error_key TEXT                -- z. B. mqtt, ws, rest\n);\nCREATE INDEX IF NOT EXISTS idx_app_logs_ts ON app_logs(ts);\nCREATE INDEX IF NOT EXISTS idx_app_logs_kind ON app_logs(kind, device, error_key);",
+  "topic": "CREATE TABLE IF NOT EXISTS vibration (\n  id      INTEGER PRIMARY KEY AUTOINCREMENT,\n  ts      INTEGER NOT NULL,\n  value   REAL    NOT NULL,\n  node_id TEXT\n);\nCREATE INDEX IF NOT EXISTS idx_vibration_ts ON vibration(ts);\nCREATE TABLE IF NOT EXISTS app_logs (\n  id        INTEGER PRIMARY KEY AUTOINCREMENT,\n  ts        INTEGER NOT NULL,   -- Zeitpunkt in der App (ms)\n  received  INTEGER NOT NULL,   -- Eingang bei Node-RED (ms)\n  device    TEXT    NOT NULL,   -- Kennung des Handys\n  kind      TEXT    NOT NULL,   -- log | error | resolve\n  level     TEXT,               -- info | ok | warn | error\n  category  TEXT,               -- Scan | Verbindung | Daten | System\n  message   TEXT    NOT NULL,\n  detail    TEXT,\n  error_key TEXT                -- z. B. mqtt, ws, rest\n);\nCREATE INDEX IF NOT EXISTS idx_app_logs_ts ON app_logs(ts);\nCREATE INDEX IF NOT EXISTS idx_app_logs_kind ON app_logs(kind, device, error_key);\nCREATE TABLE IF NOT EXISTS vib_alarms (\n  id        INTEGER PRIMARY KEY AUTOINCREMENT,\n  start_ts  INTEGER NOT NULL,   -- Alarm begonnen (ms)\n  end_ts    INTEGER,            -- Alarm beendet (ms), NULL = läuft noch\n  max_value REAL    NOT NULL,   -- höchster Wert während des Alarms\n  threshold REAL    NOT NULL    -- Grenzwert\n);",
   "x": 190,
   "y": 600,
   "wires": [
@@ -374,7 +371,7 @@
   "type": "function",
   "z": "zl3_tab",
   "name": "DB bereit",
-  "func": "node.status({ fill: 'green', shape: 'dot', text: 'Tabellen vibration + app_logs bereit' });\nreturn null;",
+  "func": "node.status({ fill: 'green', shape: 'dot', text: 'Tabellen vibration, app_logs, vib_alarms bereit' });\nreturn null;",
   "outputs": 1,
   "noerr": 0,
   "x": 620,
@@ -762,6 +759,222 @@
   "y": 800,
   "wires": [
    []
+  ]
+ },
+ {
+  "id": "zl3_c5",
+  "type": "comment",
+  "z": "zl3_tab",
+  "name": "5) Vibrationsalarm: über 3 = Alarm, ab 2,9 wieder normal",
+  "info": "",
+  "x": 250,
+  "y": 1180,
+  "wires": []
+ },
+ {
+  "id": "zl3_alarm_check",
+  "type": "function",
+  "z": "zl3_tab",
+  "name": "Alarm prüfen (> 3)",
+  "func": "// Grenzwerte: Alarm über 3, Ende erst ab 2,9 oder darunter (damit es um 3 herum nicht flackert)\nconst ALARM_AB  = 3.0;\nconst NORMAL_AB = 2.9;\n\nconst v = msg.payload.value;\nconst now = Date.now();\nlet alarm = flow.get('vibAlarm') || null;\nlet beginn = null, ende = null;\n\nif (!alarm && v > ALARM_AB) {\n    alarm = { start: now, max: v };\n    beginn = { payload: { active: true, value: v, max: v, threshold: ALARM_AB,\n                          start: new Date(now).toISOString(), timestamp: new Date(now).toISOString() },\n               params: { $start: now, $max: v, $threshold: ALARM_AB } };\n} else if (alarm) {\n    alarm.max = Math.max(alarm.max, v);\n    if (v <= NORMAL_AB) {\n        const dauer = Math.round((now - alarm.start) / 1000);\n        ende = { payload: { active: false, value: v, max: alarm.max, threshold: ALARM_AB,\n                            start: new Date(alarm.start).toISOString(), end: new Date(now).toISOString(),\n                            durationSeconds: dauer, timestamp: new Date(now).toISOString() },\n                 params: { $end: now, $max: alarm.max } };\n        alarm = null;\n    }\n}\nflow.set('vibAlarm', alarm);\n\n// Alarmzustand in jede Vibrationsnachricht schreiben (WebSocket + MQTT)\nmsg.payload.alarm = !!alarm;\nmsg.payload.threshold = ALARM_AB;\nif (alarm) msg.payload.alarmMax = alarm.max;\n\nnode.status(alarm\n    ? { fill: 'red', shape: 'ring', text: 'ALARM ' + v.toFixed(3) + ' (max ' + alarm.max.toFixed(3) + ')' }\n    : { fill: 'green', shape: 'dot', text: 'normal ' + v.toFixed(3) });\n\nif (beginn) { beginn.topic = 'lf7/zwischenlager-emirhantlc/alarm'; node.warn('Vibrationsalarm: ' + v.toFixed(3) + ' > ' + ALARM_AB); }\nif (ende)   { ende.topic   = 'lf7/zwischenlager-emirhantlc/alarm'; }\nreturn [msg, beginn, ende];",
+  "outputs": 3,
+  "noerr": 0,
+  "outputLabels": [
+   "Vibration",
+   "Alarm-Beginn",
+   "Alarm-Ende"
+  ],
+  "x": 1040,
+  "y": 300,
+  "wires": [
+   [
+    "zl3_vib_ws",
+    "zl3_vib_mqtt",
+    "zl3_vib_dbg",
+    "zl3_db_insert_fn"
+   ],
+   [
+    "zl3_alarm_mqtt",
+    "zl3_alarm_insert",
+    "zl3_alarm_dbg"
+   ],
+   [
+    "zl3_alarm_mqtt",
+    "zl3_alarm_update",
+    "zl3_alarm_dbg"
+   ]
+  ]
+ },
+ {
+  "id": "zl3_alarm_mqtt",
+  "type": "mqtt out",
+  "z": "zl3_tab",
+  "name": "Alarm per MQTT",
+  "topic": "",
+  "qos": "1",
+  "retain": "true",
+  "respTopic": "",
+  "contentType": "",
+  "userProps": "",
+  "correl": "",
+  "expiry": "",
+  "broker": "b7433598460a3e82",
+  "x": 1290,
+  "y": 240,
+  "wires": []
+ },
+ {
+  "id": "zl3_alarm_dbg",
+  "type": "debug",
+  "z": "zl3_tab",
+  "name": "Alarm (Beginn/Ende)",
+  "active": true,
+  "tosidebar": true,
+  "console": false,
+  "tostatus": false,
+  "complete": "payload",
+  "targetType": "msg",
+  "statusVal": "",
+  "statusType": "auto",
+  "x": 1300,
+  "y": 200,
+  "wires": []
+ },
+ {
+  "id": "zl3_alarm_insert",
+  "type": "sqlite",
+  "z": "zl3_tab",
+  "mydb": "zl3_db",
+  "sqlquery": "prepared",
+  "sql": "INSERT INTO vib_alarms (start_ts, max_value, threshold) VALUES ($start, $max, $threshold)",
+  "name": "INSERT vib_alarms",
+  "x": 1290,
+  "y": 280,
+  "wires": [
+   []
+  ]
+ },
+ {
+  "id": "zl3_alarm_update",
+  "type": "sqlite",
+  "z": "zl3_tab",
+  "mydb": "zl3_db",
+  "sqlquery": "prepared",
+  "sql": "UPDATE vib_alarms SET end_ts = $end, max_value = $max\nWHERE id = (SELECT MAX(id) FROM vib_alarms WHERE end_ts IS NULL)",
+  "name": "UPDATE vib_alarms (Ende)",
+  "x": 1310,
+  "y": 320,
+  "wires": [
+   []
+  ]
+ },
+ {
+  "id": "zl3_alarm_get_in",
+  "type": "http in",
+  "z": "zl3_tab",
+  "name": "GET /api/alarme",
+  "url": "/api/alarme",
+  "method": "get",
+  "upload": false,
+  "swaggerDoc": "",
+  "x": 150,
+  "y": 1240,
+  "wires": [
+   [
+    "zl3_alarm_select"
+   ]
+  ]
+ },
+ {
+  "id": "zl3_alarm_select",
+  "type": "sqlite",
+  "z": "zl3_tab",
+  "mydb": "zl3_db",
+  "sqlquery": "fixed",
+  "sql": "SELECT id, start_ts, end_ts, max_value, threshold,\n       ROUND((COALESCE(end_ts, strftime('%s','now') * 1000) - start_ts) / 1000.0) AS duration_s\nFROM vib_alarms\nORDER BY id DESC\nLIMIT 20",
+  "name": "SELECT vib_alarms",
+  "x": 370,
+  "y": 1240,
+  "wires": [
+   [
+    "zl3_alarm_get_format"
+   ]
+  ]
+ },
+ {
+  "id": "zl3_alarm_get_format",
+  "type": "function",
+  "z": "zl3_tab",
+  "name": "Antwort bauen",
+  "func": "msg.headers = {\n    'Access-Control-Allow-Origin': '*',\n    'Content-Type': 'application/json; charset=utf-8',\n    'Cache-Control': 'no-store'\n};\nconst aktiv = flow.get('vibAlarm');\nmsg.statusCode = 200;\nmsg.payload = {\n    active: !!aktiv,\n    threshold: 3.0,\n    current: aktiv ? { start: new Date(aktiv.start).toISOString(), max: aktiv.max } : null,\n    alarms: (msg.payload || []).map(r => ({\n        id: r.id,\n        start: new Date(r.start_ts).toISOString(),\n        end: r.end_ts ? new Date(r.end_ts).toISOString() : null,\n        durationSeconds: r.duration_s,\n        max: r.max_value,\n        threshold: r.threshold\n    }))\n};\nreturn msg;",
+  "outputs": 1,
+  "noerr": 0,
+  "x": 580,
+  "y": 1240,
+  "wires": [
+   [
+    "zl3_resp"
+   ]
+  ]
+ },
+ {
+  "id": "zl3_alarm_test_hi",
+  "type": "inject",
+  "z": "zl3_tab",
+  "name": "Test: Wert 3,6 (Alarm)",
+  "props": [
+   {
+    "p": "payload"
+   },
+   {
+    "p": "test",
+    "v": "true",
+    "vt": "bool"
+   }
+  ],
+  "repeat": "",
+  "crontab": "",
+  "once": false,
+  "onceDelay": "",
+  "topic": "",
+  "payload": "3.6",
+  "payloadType": "num",
+  "x": 170,
+  "y": 1300,
+  "wires": [
+   [
+    "zl3_vib_extract"
+   ]
+  ]
+ },
+ {
+  "id": "zl3_alarm_test_lo",
+  "type": "inject",
+  "z": "zl3_tab",
+  "name": "Test: Wert 2,0 (normal)",
+  "props": [
+   {
+    "p": "payload"
+   },
+   {
+    "p": "test",
+    "v": "true",
+    "vt": "bool"
+   }
+  ],
+  "repeat": "",
+  "crontab": "",
+  "once": false,
+  "onceDelay": "",
+  "topic": "",
+  "payload": "2.0",
+  "payloadType": "num",
+  "x": 170,
+  "y": 1340,
+  "wires": [
+   [
+    "zl3_vib_extract"
+   ]
   ]
  }
 ]

@@ -726,6 +726,57 @@
     .empty strong { font-size: 16px; font-weight: 650; }
     .empty span { color: var(--muted); font-size: 14.5px; }
 
+    /* ---------- Vibrationsalarm ---------- */
+    .alarm-banner {
+      pointer-events: auto;
+      position: absolute;
+      z-index: 9;
+      left: 12px;
+      right: 12px;
+      top: calc(var(--top-h, 120px) + 6px);
+      max-width: 640px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 11px 12px 11px 14px;
+      border-radius: 16px;
+      background: var(--bad);
+      color: #fff;
+      box-shadow: 0 10px 30px rgba(217,45,32,.45);
+      animation: alarm-pulse 1.2s ease-in-out infinite;
+    }
+    .alarm-banner[hidden] { display: none; }
+    .alarm-banner > svg { width: 26px; height: 26px; flex: none; }
+    .alarm-text { min-width: 0; flex: 1; display: grid; }
+    .alarm-text strong { font-size: 15px; font-weight: 700; }
+    .alarm-text span { font-size: 13.5px; opacity: .92; font-variant-numeric: tabular-nums; }
+    .alarm-mute {
+      flex: none;
+      border: 0;
+      border-radius: 10px;
+      padding: 8px 11px;
+      background: rgba(255,255,255,.2);
+      color: #fff;
+      font: 650 13px var(--f-ui);
+      cursor: pointer;
+    }
+    .alarm-mute[aria-pressed="true"] { background: rgba(255,255,255,.36); }
+    @keyframes alarm-pulse {
+      0%, 100% { box-shadow: 0 10px 30px rgba(217,45,32,.45); }
+      50%      { box-shadow: 0 10px 30px rgba(217,45,32,.45), 0 0 0 6px rgba(217,45,32,.28); }
+    }
+    /* Panel rückt unter das Banner */
+    #hud[data-alarm="on"][data-sheet="open"] #overlay {
+      max-height: calc(100vh - var(--top-h, 130px) - 178px - var(--safe-b));
+      max-height: calc(100dvh - var(--top-h, 130px) - 178px - var(--safe-b));
+    }
+
+    .kpi.vib.alarm { background: #fdecea; box-shadow: inset 0 0 0 2px var(--bad); }
+    .kpi.vib.alarm small, .kpi.vib.alarm strong { color: var(--bad); }
+    .kpi.vib.alarm .vib-spark polyline { stroke: var(--bad); }
+    .vib-spark line { stroke: var(--bad); stroke-width: 1.5; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; opacity: .7; }
+
     /* Vibrationskachel darf nie breiter als das Panel werden */
     .kpi.vib { grid-template-columns: minmax(0, 1fr); }
     .vib-top { flex-wrap: wrap; row-gap: 6px; }
@@ -806,6 +857,7 @@
     }
 
     @media (prefers-reduced-motion: reduce) {
+      .alarm-banner { animation: none; }
       #scan-frame .scanline { animation: none; opacity: .7; top: 50%; }
       #overlay { animation: none; }
     }
@@ -825,6 +877,16 @@
   </a-scene>
 
   <div id="hud" data-view="scan">
+    <!-- Vibrationsalarm: sichtbar auf allen Seiten -->
+    <div id="alarm-banner" class="alarm-banner" role="alert" hidden>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
+      <div class="alarm-text">
+        <strong>Vibrationsalarm P-101</strong>
+        <span id="alarm-detail">Wert über Grenzwert</span>
+      </div>
+      <button type="button" class="alarm-mute" id="alarm-mute" aria-pressed="false">Ton aus</button>
+    </div>
+    <span id="alarm-state" hidden>normal</span>
     <div id="view-scan">
     <div class="topbar">
       <div class="brand glass">
@@ -886,6 +948,7 @@
             </div>
             <div class="vib-main">
               <svg class="vib-spark" viewBox="0 0 120 34" preserveAspectRatio="none" aria-hidden="true">
+                <line id="vib-thr" x1="0" x2="120" y1="-10" y2="-10" />
                 <polyline id="vib-line" points="" />
               </svg>
               <strong id="vib-value">–</strong>
@@ -1341,6 +1404,16 @@
 
     /* ---------- Beobachter: Vibrationswerte ---------- */
     let vibStale = false, vibSeen = false;
+    watch($('alarm-state'), text => {
+      if (text === 'aktiv') reportError('vib-alarm', 'Daten', 'Vibrationsalarm P-101',
+        'Der Vibrationswert liegt über dem Grenzwert. ' + $('alarm-detail').textContent,
+        'Maschine P-101 prüfen. Der Alarm endet automatisch, wenn der Wert wieder auf 2,9 oder darunter fällt.');
+      else if (text === 'normal' && errors.some(e => e.key === 'vib-alarm' && !e.resolved)) {
+        addLog('ok', 'Daten', 'Vibration wieder im Normalbereich');
+        resolveError('vib-alarm');
+      }
+    });
+
     watch($('vib-time'), text => {
       if (/keine neuen Werte/.test(text)) {
         if (vibStale) return;
@@ -1588,13 +1661,77 @@
         new Date(d.timestamp || Date.now()).toLocaleTimeString('de-DE', timeFmt);
       document.querySelector('.kpi.vib').classList.remove('stale');
 
-      const min = Math.min(...vibHistory), max = Math.max(...vibHistory);
+      // Grenzwert kommt von Node-RED (Standard 3); Alarm ebenfalls von Node-RED, sonst selbst prüfen
+      const threshold = Number.isFinite(Number(d.threshold)) ? Number(d.threshold) : 3;
+      const alarm = typeof d.alarm === 'boolean' ? d.alarm : value > threshold;
+      setAlarm(alarm, value, Number(d.alarmMax) || value, threshold);
+
+      // Verlauf; der Grenzwert wird mit eingezeichnet, wenn er in der Nähe der Werte liegt
+      let min = Math.min(...vibHistory), max = Math.max(...vibHistory);
+      if (threshold <= max * 1.25) { min = Math.min(min, threshold); max = Math.max(max, threshold); }
       const span = (max - min) || 1;
+      const y = v => (31 - ((v - min) / span) * 28).toFixed(1);
       const step = vibHistory.length > 1 ? 120 / (vibHistory.length - 1) : 0;
-      $('vib-line').setAttribute('points', vibHistory
-        .map((v, i) => `${(i * step).toFixed(1)},${(31 - ((v - min) / span) * 28).toFixed(1)}`)
-        .join(' '));
+      $('vib-line').setAttribute('points', vibHistory.map((v, i) => `${(i * step).toFixed(1)},${y(v)}`).join(' '));
+      const thrY = threshold >= min && threshold <= max ? y(threshold) : -10;
+      $('vib-thr').setAttribute('y1', thrY);
+      $('vib-thr').setAttribute('y2', thrY);
     }
+
+    /* ---------- Vibrationsalarm ---------- */
+    let alarmOn = false, alarmMuted = false, alarmBeep = null, audioCtx = null;
+
+    // Ton darf erst nach einer Berührung abgespielt werden (Browser-Regel)
+    window.addEventListener('pointerdown', () => {
+      try {
+        audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+      } catch (e) {}
+    }, { passive: true });
+
+    function beep() {
+      if (alarmMuted || !audioCtx || audioCtx.state !== 'running') return;
+      const t = audioCtx.currentTime;
+      [0, 0.25].forEach(offset => {
+        const osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
+        osc.type = 'square';
+        osc.frequency.value = 880;
+        gain.gain.setValueAtTime(0.0001, t + offset);
+        gain.gain.exponentialRampToValueAtTime(0.15, t + offset + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t + offset + 0.18);
+        osc.connect(gain).connect(audioCtx.destination);
+        osc.start(t + offset);
+        osc.stop(t + offset + 0.2);
+      });
+    }
+
+    function setAlarm(on, value, maxValue, threshold) {
+      const tile = document.querySelector('.kpi.vib');
+      if (on) {
+        $('alarm-detail').textContent =
+          'Aktuell ' + value.toFixed(3) + ' · max ' + maxValue.toFixed(3) + ' · Grenzwert ' + threshold;
+      }
+      if (on === alarmOn) return;
+      alarmOn = on;
+
+      tile.classList.toggle('alarm', on);
+      $('alarm-banner').hidden = !on;
+      if (on) $('hud').dataset.alarm = 'on'; else delete $('hud').dataset.alarm;
+      $('alarm-state').textContent = on ? 'aktiv' : 'normal';
+
+      clearInterval(alarmBeep);
+      if (on) {
+        if (navigator.vibrate) navigator.vibrate([300, 150, 300, 150, 300]);
+        beep();
+        alarmBeep = setInterval(beep, 4000);
+      }
+    }
+
+    $('alarm-mute').addEventListener('click', () => {
+      alarmMuted = !alarmMuted;
+      $('alarm-mute').setAttribute('aria-pressed', String(alarmMuted));
+      $('alarm-mute').textContent = alarmMuted ? 'Ton an' : 'Ton aus';
+    });
 
     function updateSources() {
       const now = Date.now();
