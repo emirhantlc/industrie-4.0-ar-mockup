@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Zwischenlager AR</title>
-  <meta name="theme-color" content="#0e1216">
+  <meta name="theme-color" content="#ffffff">
 
   <!-- Exakt wie in deinem ursprünglichen Index -->
   <script src="https://aframe.io/releases/1.4.0/aframe.min.js"></script>
@@ -14,27 +14,29 @@
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@500;600;700&family=Barlow+Condensed:wght@600;700&family=JetBrains+Mono:wght@500;600&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap">
 
   <style>
-    /* HMI-Look: dunkles Glas über dem Kamerabild, Signal-Amber als Akzent, Werte in Mono */
+    /* Ruhiges Business-Design: weisse Karte über dem Kamerabild, neutrale Grautöne,
+       ein Akzentblau für Aktionen und Messwerte, Grün/Gelb/Rot nur für Status. */
     :root {
-      color-scheme: dark;
-      --amber: #f2a516;
-      --amber-soft: rgba(242,165,22,.16);
-      --ok: #2fd08a;
-      --ok-soft: rgba(47,208,138,.15);
-      --bad: #ff6b6b;
-      --bad-soft: rgba(255,107,107,.15);
-      --panel: rgba(14,18,22,.72);
-      --panel-strong: rgba(12,15,19,.88);
-      --tile: rgba(255,255,255,.055);
-      --line: rgba(255,255,255,.12);
-      --text: #f3f5f7;
-      --muted: rgba(243,245,247,.6);
-      --f-ui: "Barlow", system-ui, -apple-system, "Segoe UI", sans-serif;
-      --f-head: "Barlow Condensed", "Arial Narrow", system-ui, sans-serif;
-      --f-num: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+      color-scheme: light;
+      --accent: #2457f5;
+      --accent-strong: #1a43cc;
+      --accent-tint: #e8eeff;
+      --ink: #0f1b2d;
+      --muted: #5b6778;
+      --surface: #ffffff;
+      --tile: #f2f4f8;
+      --line: #e3e8ef;
+      --ok: #12a150;
+      --ok-soft: rgba(18,161,80,.18);
+      --wait: #d97706;
+      --wait-soft: rgba(217,119,6,.2);
+      --bad: #d92d20;
+      --bad-soft: rgba(217,45,32,.16);
+      --glass: rgba(255,255,255,.92);
+      --f-ui: "Geist", "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
       --safe-t: env(safe-area-inset-top, 0px);
       --safe-b: env(safe-area-inset-bottom, 0px);
     }
@@ -46,7 +48,7 @@
       font-family: var(--f-ui);
       overflow: hidden;
       background: #000;
-      color: var(--text);
+      color: var(--ink);
       -webkit-font-smoothing: antialiased;
     }
 
@@ -69,16 +71,20 @@
       pointer-events: none;
     }
 
+    /* helle Leisten (Kopfzeile, Status, Steuerung) */
     .glass {
-      background: var(--panel);
-      border: 1px solid var(--line);
-      backdrop-filter: blur(14px) saturate(140%);
-      -webkit-backdrop-filter: blur(14px) saturate(140%);
+      background: var(--glass);
+      color: var(--ink);
+      border: 1px solid rgba(255,255,255,.7);
+      box-shadow: 0 6px 20px rgba(8,15,30,.2);
+      backdrop-filter: blur(14px) saturate(160%);
+      -webkit-backdrop-filter: blur(14px) saturate(160%);
     }
 
     /* ---------- Kopfzeile ---------- */
     .topbar {
       position: absolute;
+      z-index: 2;
       top: calc(12px + var(--safe-t));
       left: 12px;
       right: 12px;
@@ -92,42 +98,46 @@
       display: flex;
       align-items: center;
       gap: 10px;
-      padding: 7px 12px 7px 7px;
-      border-radius: 14px;
+      padding: 7px 14px 7px 7px;
+      border-radius: 16px;
       min-width: 0;
+      flex: 0 1 auto;
     }
+    .brand > div:last-child { min-width: 0; }
 
     .logo {
-      width: 34px;
-      height: 34px;
-      border-radius: 10px;
+      width: 36px;
+      height: 36px;
+      border-radius: 11px;
       display: grid;
       place-items: center;
-      background: var(--amber);
-      color: #1a1204;
-      font-family: var(--f-head);
+      background: var(--accent);
+      color: #fff;
       font-weight: 700;
-      font-size: 15px;
+      font-size: 14px;
       letter-spacing: .02em;
       flex: none;
     }
 
     .brand strong {
       display: block;
-      font-family: var(--f-head);
-      font-size: 17px;
-      line-height: 1.05;
-      letter-spacing: .01em;
+      font-size: 15px;
+      font-weight: 650;
+      line-height: 1.2;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     .brand small {
       display: block;
       color: var(--muted);
-      font-size: 11px;
-      letter-spacing: .04em;
+      font-size: 12.5px;
+      line-height: 1.2;
     }
 
     .chips {
+      flex: none;
       display: flex;
       flex-direction: column;
       align-items: flex-end;
@@ -137,10 +147,10 @@
     .chip {
       display: inline-flex;
       align-items: center;
-      gap: 7px;
-      padding: 6px 11px;
+      gap: 8px;
+      padding: 6px 12px;
       border-radius: 999px;
-      font-size: 12px;
+      font-size: 12.5px;
       font-weight: 600;
       white-space: nowrap;
     }
@@ -157,40 +167,31 @@
 
     /* MQTT-Status (Klassen werden per JS gesetzt: online | online wait | online off) */
     .online .dot { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); }
-    .online.wait .dot { background: var(--amber); box-shadow: 0 0 0 3px var(--amber-soft); }
+    .online.wait .dot { background: var(--wait); box-shadow: 0 0 0 3px var(--wait-soft); }
     .online.off .dot { background: var(--bad); box-shadow: 0 0 0 3px var(--bad-soft); }
 
     /* antippbarer Chip (Node-RED-Adresse) */
     .chip.btn {
       pointer-events: auto;
       cursor: pointer;
-      color: var(--text);
-      font: 600 12px var(--f-ui);
+      font: 600 12.5px var(--f-ui);
     }
-    .chip.btn:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
-
-    .vib-src { display: flex; gap: 4px; margin-top: 4px; }
-    .vib-src b {
-      font: 600 9px var(--f-num);
-      letter-spacing: .04em;
-      padding: 2px 6px;
-      border-radius: 4px;
-      background: rgba(255,255,255,.08);
-      color: var(--muted);
-    }
-    .vib-src b.on { background: var(--ok-soft); color: var(--ok); }
+    .chip.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
     /* ---------- Scan-Rahmen ---------- */
     #scan-frame {
       position: absolute;
+      z-index: 1;
       left: 50%;
       top: 44%;
       transform: translate(-50%, -50%);
       width: min(64vw, 320px);
       aspect-ratio: 1 / 1;
-      border-radius: 24px;
+      border-radius: 28px;
       overflow: hidden;
-      transition: box-shadow .2s ease;
+      /* dunkelt alles ausserhalb des Rahmens ab, damit der Blick im Rahmen bleibt */
+      box-shadow: 0 0 0 100vmax rgba(10,18,32,.45);
+      transition: box-shadow .25s ease;
     }
 
     #scan-frame::before,
@@ -199,51 +200,51 @@
     #scan-frame .corner::after {
       content: "";
       position: absolute;
-      width: 46px;
-      height: 46px;
-      border: 0 solid var(--amber);
+      width: 52px;
+      height: 52px;
+      border: 0 solid #fff;
       transition: border-color .2s ease;
     }
-    #scan-frame::before { left: 0; top: 0; border-width: 4px 0 0 4px; border-radius: 24px 0 0 0; }
-    #scan-frame::after { right: 0; top: 0; border-width: 4px 4px 0 0; border-radius: 0 24px 0 0; }
-    #scan-frame .corner::before { left: 0; bottom: 0; border-width: 0 0 4px 4px; border-radius: 0 0 0 24px; }
-    #scan-frame .corner::after { right: 0; bottom: 0; border-width: 0 4px 4px 0; border-radius: 0 0 24px 0; }
+    #scan-frame::before { left: 0; top: 0; border-width: 4px 0 0 4px; border-radius: 28px 0 0 0; }
+    #scan-frame::after { right: 0; top: 0; border-width: 4px 4px 0 0; border-radius: 0 28px 0 0; }
+    #scan-frame .corner::before { left: 0; bottom: 0; border-width: 0 0 4px 4px; border-radius: 0 0 0 28px; }
+    #scan-frame .corner::after { right: 0; bottom: 0; border-width: 0 4px 4px 0; border-radius: 0 0 28px 0; }
+
+    #scan-frame .corner { position: absolute; inset: 0; }
 
     /* Scanlinie */
-    #scan-frame .corner {
-      position: absolute;
-      inset: 0;
-    }
     #scan-frame .scanline {
       position: absolute;
-      left: 8%;
-      right: 8%;
+      left: 10%;
+      right: 10%;
       top: 0;
       height: 2px;
-      background: linear-gradient(90deg, transparent, var(--amber), transparent);
-      box-shadow: 0 0 14px var(--amber);
+      border-radius: 2px;
+      background: linear-gradient(90deg, transparent, #fff, transparent);
+      box-shadow: 0 0 14px rgba(255,255,255,.8);
       animation: scan 2.4s ease-in-out infinite;
     }
     @keyframes scan {
-      0%, 100% { transform: translateY(12px); opacity: .2; }
-      50% { transform: translateY(calc(min(64vw, 320px) - 14px)); opacity: 1; }
+      0%, 100% { transform: translateY(14px); opacity: .25; }
+      50% { transform: translateY(calc(min(64vw, 320px) - 16px)); opacity: 1; }
     }
 
-    #scan-frame.found { box-shadow: 0 0 0 1px rgba(47,208,138,.5), 0 0 40px rgba(47,208,138,.28); }
+    #scan-frame.found { box-shadow: 0 0 0 100vmax rgba(10,18,32,.12), 0 0 40px rgba(18,161,80,.45); }
     #scan-frame.found::before,
     #scan-frame.found::after,
     #scan-frame.found .corner::before,
-    #scan-frame.found .corner::after { border-color: var(--ok); }
+    #scan-frame.found .corner::after { border-color: #3ddc84; }
     #scan-frame.found .scanline { display: none; }
 
     #scan-hint {
       position: absolute;
+      z-index: 2;
       left: 50%;
-      top: calc(44% + min(32vw, 160px) + 18px);
+      top: calc(44% + min(32vw, 160px) + 20px);
       transform: translateX(-50%);
-      padding: 8px 14px;
+      padding: 9px 16px;
       border-radius: 999px;
-      font-size: 13px;
+      font-size: 14px;
       font-weight: 600;
       text-align: center;
       white-space: nowrap;
@@ -252,122 +253,91 @@
       text-overflow: ellipsis;
     }
 
-    /* ---------- Daten-Panel (Bottom Sheet) ---------- */
+    /* ---------- Datenkarte ---------- */
     #overlay {
       display: none;
       position: absolute;
+      z-index: 3;
       left: 50%;
-      bottom: calc(76px + var(--safe-b));
+      bottom: calc(154px + var(--safe-b));
       transform: translateX(-50%);
-      width: min(calc(100vw - 20px), 640px);
-      max-height: calc(100vh - 150px - var(--safe-t) - var(--safe-b));
+      width: min(calc(100vw - 24px), 640px);
+      max-height: calc(100vh - 290px - var(--safe-t) - var(--safe-b));
+      max-height: calc(100dvh - 290px - var(--safe-t) - var(--safe-b));
       overflow-y: auto;
-      padding: 10px 14px 14px;
+      overscroll-behavior: contain;
+      padding: 0;
+      border: 0;
       border-radius: 22px;
-      background: var(--panel-strong);
-      box-shadow: 0 24px 60px rgba(0,0,0,.45);
+      background: var(--surface);
+      color: var(--ink);
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+      box-shadow: 0 0 0 1px rgba(15,27,45,.06), 0 24px 60px rgba(8,15,30,.4);
       pointer-events: auto;
-      animation: rise .22s ease-out;
+      animation: rise .25s ease-out;
     }
     @keyframes rise {
       from { transform: translate(-50%, 14px); opacity: 0; }
-      to { transform: translate(-50%, 0); opacity: 1; }
+      to   { transform: translate(-50%, 0); opacity: 1; }
     }
 
-    .grabber {
-      width: 38px;
-      height: 4px;
-      border-radius: 4px;
-      background: rgba(255,255,255,.22);
-      margin: 0 auto 10px;
-    }
-
-    .overlay-header {
+    .sheet-head {
+      position: sticky;
+      top: 0;
+      z-index: 2;
       display: flex;
       justify-content: space-between;
-      align-items: flex-end;
+      align-items: center;
       gap: 12px;
-      margin-bottom: 12px;
+      padding: 16px 18px 14px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--line);
     }
+    .sheet-head > div { min-width: 0; }
 
+    /* Statuszeile (wird per JS beschrieben) */
     .eyebrow {
       display: block;
-      font-family: var(--f-num);
-      font-size: 10px;
-      letter-spacing: .1em;
-      text-transform: uppercase;
-      color: var(--amber);
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--muted);
       margin-bottom: 2px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
-    .overlay-header h2 {
+    .sheet-head h2 {
       margin: 0;
-      font-family: var(--f-head);
-      font-size: 26px;
-      line-height: 1;
-      letter-spacing: .01em;
+      font-size: 22px;
+      font-weight: 650;
+      line-height: 1.15;
+      letter-spacing: -.01em;
     }
 
     .order-id {
-      font-family: var(--f-num);
-      font-size: 13px;
-      font-weight: 600;
-      padding: 6px 10px;
-      border-radius: 8px;
-      background: var(--amber-soft);
-      color: var(--amber);
+      flex: none;
+      padding: 7px 13px;
+      border-radius: 999px;
+      background: var(--accent-tint);
+      color: var(--accent-strong);
+      font-size: 14px;
+      font-weight: 650;
+      font-variant-numeric: tabular-nums;
       white-space: nowrap;
     }
 
+    .sheet-body { padding: 14px 16px 16px; }
+
     .kpis {
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 8px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
     }
-
-    .kpi.live {
-      grid-column: 1 / -1;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      background: var(--ok-soft);
-    }
-    .kpi.live small { margin: 0; color: var(--ok); }
-    .kpi.live strong { font-size: 22px; }
-
-    .kpi.vib {
-      grid-column: 1 / -1;
-      display: grid;
-      grid-template-columns: auto minmax(0, 1fr) auto;
-      align-items: center;
-      gap: 12px;
-      background: var(--amber-soft);
-    }
-    .kpi.vib small { margin: 0; color: var(--amber); }
-    .kpi.vib small em {
-      font-style: normal;
-      font-family: var(--f-num);
-      font-size: 9px;
-      padding: 1px 5px;
-      margin-left: 4px;
-      border-radius: 4px;
-      background: rgba(242,165,22,.22);
-    }
-    .vib-meta { display: block; font-family: var(--f-num); font-size: 10.5px; color: var(--muted); margin-top: 2px; }
-    .vib-spark { width: 100%; height: 34px; overflow: visible; }
-    .vib-spark polyline {
-      fill: none;
-      stroke: var(--amber);
-      stroke-width: 2;
-      stroke-linejoin: round;
-      stroke-linecap: round;
-      vector-effect: non-scaling-stroke;
-    }
-    .kpi.vib strong { font-size: 22px; color: var(--amber); }
-    .kpi.vib.stale strong, .kpi.vib.stale .vib-spark polyline { opacity: .45; }
 
     .kpi {
-      padding: 10px 11px;
+      padding: 12px 14px;
       border-radius: 14px;
       background: var(--tile);
       min-width: 0;
@@ -376,10 +346,8 @@
     .kpi small {
       display: block;
       color: var(--muted);
-      font-size: 10.5px;
-      font-weight: 600;
-      letter-spacing: .05em;
-      text-transform: uppercase;
+      font-size: 13px;
+      font-weight: 500;
       margin-bottom: 4px;
       white-space: nowrap;
       overflow: hidden;
@@ -388,81 +356,148 @@
 
     .kpi strong {
       display: block;
-      font-family: var(--f-num);
-      font-size: 18px;
-      font-weight: 600;
+      font-size: 22px;
+      font-weight: 650;
+      line-height: 1.15;
+      letter-spacing: -.01em;
       font-variant-numeric: tabular-nums;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
     }
 
-    .kpi.live strong { color: var(--ok); }
+    .kpi.big strong { font-size: 40px; line-height: 1.1; letter-spacing: -.02em; }
 
-    .order {
-      margin-top: 8px;
-      padding: 12px;
-      border-radius: 14px;
-      background: var(--tile);
+    /* Maschinenlaufzeit: der einzige dunkle Block, damit er sofort auffällt */
+    .kpi.live {
+      grid-column: 1 / -1;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      background: var(--ink);
+      color: #fff;
     }
+    .kpi.live small { margin: 0; font-size: 14px; color: rgba(255,255,255,.7); }
+    .kpi.live strong { font-size: 28px; }
+
+    /* Vibration */
+    .kpi.vib {
+      grid-column: 1 / -1;
+      display: grid;
+      gap: 8px;
+    }
+    .vib-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+    }
+    .kpi.vib small { margin: 0; font-size: 14px; overflow: visible; }
+    .kpi.vib small em {
+      font-style: normal;
+      font-size: 11.5px;
+      font-weight: 600;
+      padding: 2px 8px;
+      margin-left: 6px;
+      border-radius: 999px;
+      background: var(--accent-tint);
+      color: var(--accent-strong);
+    }
+    .vib-src { display: flex; gap: 4px; flex: none; }
+    .vib-src b {
+      font-size: 11.5px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: #e3e8ef;
+      color: var(--muted);
+    }
+    .vib-src b.on { background: var(--ok-soft); color: #0b7a3c; }
+
+    .vib-main {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 14px;
+    }
+    .vib-spark { width: 100%; height: 40px; overflow: visible; }
+    .vib-spark polyline {
+      fill: none;
+      stroke: var(--accent);
+      stroke-width: 2.5;
+      stroke-linejoin: round;
+      stroke-linecap: round;
+      vector-effect: non-scaling-stroke;
+    }
+    .kpi.vib strong { font-size: 24px; }
+    .kpi.vib.stale strong, .kpi.vib.stale .vib-spark polyline { opacity: .45; }
+
+    .vib-foot { display: grid; gap: 1px; }
+    .vib-meta { display: block; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+    /* Auftrag */
+    .order { margin-top: 18px; }
 
     .order > small {
       display: block;
-      color: var(--muted);
-      font-size: 10.5px;
-      font-weight: 600;
-      letter-spacing: .05em;
-      text-transform: uppercase;
-      margin-bottom: 8px;
+      font-size: 14px;
+      font-weight: 650;
+      margin-bottom: 10px;
     }
 
     .order-rows {
       display: grid;
       grid-template-columns: auto 1fr;
-      gap: 8px 14px;
+      gap: 10px 18px;
       align-items: center;
-      font-size: 14px;
+      margin: 0;
+      font-size: 15px;
     }
 
-    .order-rows dt { color: var(--muted); font-weight: 600; }
+    .order-rows dt { color: var(--muted); font-weight: 500; }
     .order-rows dd { margin: 0; display: flex; flex-wrap: wrap; gap: 6px; }
 
     .tag {
       display: inline-flex;
       align-items: center;
-      gap: 6px;
-      padding: 4px 9px 4px 6px;
+      gap: 8px;
+      padding: 5px 12px 5px 7px;
       border-radius: 999px;
-      background: rgba(255,255,255,.08);
+      border: 1px solid var(--line);
+      background: var(--surface);
       font-weight: 600;
-      font-size: 13px;
+      font-size: 14px;
     }
 
     .tag i {
-      width: 12px;
-      height: 12px;
+      width: 14px;
+      height: 14px;
       border-radius: 50%;
-      box-shadow: inset 0 0 0 1px rgba(0,0,0,.25);
+      box-shadow: inset 0 0 0 1.5px rgba(15,27,45,.22);
     }
 
-    .tag b { font-family: var(--f-num); font-weight: 600; }
+    .tag b { font-weight: 650; font-variant-numeric: tabular-nums; }
 
     .overlay-footer {
       display: flex;
       justify-content: space-between;
       gap: 10px;
-      margin-top: 10px;
+      margin-top: 16px;
+      padding-top: 12px;
+      border-top: 1px solid var(--line);
       color: var(--muted);
-      font-family: var(--f-num);
-      font-size: 11px;
+      font-size: 12.5px;
+      font-variant-numeric: tabular-nums;
     }
 
     /* ---------- Steuerleiste ---------- */
     .controls {
       pointer-events: auto;
       position: absolute;
+      z-index: 4;
       left: 50%;
-      bottom: calc(12px + var(--safe-b));
+      bottom: calc(86px + var(--safe-b));
       transform: translateX(-50%);
       display: flex;
       gap: 6px;
@@ -476,28 +511,225 @@
       gap: 8px;
       border: 0;
       border-radius: 13px;
-      padding: 11px 16px;
-      background: rgba(255,255,255,.08);
-      color: var(--text);
-      font: 600 14px var(--f-ui);
+      padding: 10px 16px;
+      background: #eef1f6;
+      color: var(--ink);
+      font: 600 14.5px var(--f-ui);
       cursor: pointer;
       white-space: nowrap;
     }
 
     .controls button svg { width: 18px; height: 18px; flex: none; }
-    .controls button.primary { background: var(--amber); color: #1a1204; }
+    .controls button.primary { background: var(--accent); color: #fff; }
+    .controls button:hover { filter: brightness(.96); }
     .controls button:active { transform: scale(.97); }
-    .controls button:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+    .controls button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+    /* ---------- Menü (Tab-Leiste) ---------- */
+    #view-scan { position: absolute; inset: 0; pointer-events: none; }
+    #hud:not([data-view="scan"]) #view-scan { display: none; }
+
+    .tabbar {
+      pointer-events: auto;
+      position: absolute;
+      z-index: 8;
+      left: 12px;
+      right: 12px;
+      bottom: calc(12px + var(--safe-b));
+      max-width: 480px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 4px;
+      padding: 6px;
+      border-radius: 20px;
+    }
+
+    .tab {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 3px;
+      padding: 8px 6px 7px;
+      border: 0;
+      border-radius: 14px;
+      background: transparent;
+      color: var(--muted);
+      font: 600 12.5px var(--f-ui);
+      cursor: pointer;
+    }
+    .tab svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .tab[aria-current="page"] { background: var(--accent-tint); color: var(--accent-strong); }
+    .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+    .badge {
+      position: absolute;
+      top: 3px;
+      left: calc(50% + 6px);
+      min-width: 18px;
+      height: 18px;
+      padding: 0 5px;
+      border-radius: 999px;
+      background: var(--bad);
+      color: #fff;
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 18px;
+      text-align: center;
+      font-variant-numeric: tabular-nums;
+    }
+    .badge[hidden] { display: none; }
+
+    /* ---------- Seiten: Logs und Fehler ---------- */
+    .page {
+      pointer-events: auto;
+      position: absolute;
+      z-index: 6;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      background: var(--tile);
+      padding-top: calc(18px + var(--safe-t));
+    }
+    .page[hidden] { display: none; }
+    .page > * { width: 100%; max-width: 720px; margin-inline: auto; padding-inline: 16px; }
+
+    .page-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+      padding-bottom: 14px;
+    }
+    .page-head h2 { margin: 0; font-size: 28px; font-weight: 650; letter-spacing: -.02em; line-height: 1.15; }
+    .page-head p { margin: 3px 0 0; color: var(--muted); font-size: 14.5px; }
+    .page-actions { display: flex; gap: 6px; flex: none; }
+
+    .btn-soft {
+      border: 0;
+      border-radius: 11px;
+      padding: 9px 14px;
+      background: var(--surface);
+      box-shadow: 0 0 0 1px var(--line);
+      color: var(--ink);
+      font: 600 13.5px var(--f-ui);
+      cursor: pointer;
+    }
+    .btn-soft:hover { background: #f8f9fc; }
+    .btn-soft:focus-visible, .filter:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+    .filters {
+      display: flex;
+      gap: 6px;
+      overflow-x: auto;
+      padding-bottom: 14px;
+      scrollbar-width: none;
+    }
+    .filters::-webkit-scrollbar { display: none; }
+    .filter {
+      flex: none;
+      border: 0;
+      border-radius: 999px;
+      padding: 7px 14px;
+      background: var(--surface);
+      box-shadow: 0 0 0 1px var(--line);
+      color: var(--muted);
+      font: 600 13.5px var(--f-ui);
+      cursor: pointer;
+    }
+    .filter[aria-pressed="true"] { background: var(--ink); box-shadow: none; color: #fff; }
+
+    .page-scroll {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      padding-bottom: calc(100px + var(--safe-b));
+    }
+
+    /* Logs */
+    .log-list {
+      list-style: none;
+      margin: 0;
+      padding: 4px 0;
+      background: var(--surface);
+      border-radius: 18px;
+      box-shadow: 0 0 0 1px var(--line);
+    }
+    .log-list:empty { display: none; }
+    .log-row {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: start;
+      padding: 12px 16px;
+      border-top: 1px solid var(--line);
+    }
+    .log-row:first-child { border-top: 0; }
+    .log-dot { width: 9px; height: 9px; margin-top: 6px; border-radius: 50%; background: var(--accent); }
+    .lvl-ok .log-dot { background: var(--ok); }
+    .lvl-warn .log-dot { background: var(--wait); }
+    .lvl-error .log-dot { background: var(--bad); }
+    .log-msg { font-size: 15px; font-weight: 500; line-height: 1.35; overflow-wrap: anywhere; }
+    .log-meta { display: block; margin-top: 1px; color: var(--muted); font-size: 12.5px; }
+    .log-time { margin-top: 2px; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .log-n {
+      display: inline-block;
+      margin-left: 6px;
+      padding: 0 7px;
+      border-radius: 999px;
+      background: var(--tile);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+      vertical-align: 1px;
+    }
+
+    /* Fehler */
+    .err-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+    .err-card {
+      padding: 14px 16px 14px 18px;
+      border-radius: 16px;
+      border-left: 4px solid var(--bad);
+      background: var(--surface);
+      box-shadow: 0 0 0 1px var(--line);
+    }
+    .err-card.resolved { border-left-color: var(--ok); }
+    .err-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+    .err-title { font-size: 16px; font-weight: 650; line-height: 1.3; }
+    .err-state {
+      flex: none;
+      padding: 3px 9px;
+      border-radius: 999px;
+      background: rgba(217,45,32,.12);
+      color: #b42318;
+      font-size: 12px;
+      font-weight: 650;
+    }
+    .resolved .err-state { background: var(--ok-soft); color: #0b7a3c; }
+    .resolved .err-title { color: var(--muted); }
+    .err-detail { margin: 6px 0 0; font-size: 14.5px; line-height: 1.45; overflow-wrap: anywhere; }
+    .err-hint { margin: 10px 0 0; padding: 9px 12px; border-radius: 10px; background: var(--tile); font-size: 14px; line-height: 1.45; }
+    .err-hint b { font-weight: 650; }
+    .err-meta { margin-top: 10px; color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+
+    .empty { display: grid; justify-items: center; gap: 6px; padding: 56px 24px; text-align: center; }
+    .empty[hidden] { display: none; }
+    .empty-icon { display: grid; place-items: center; width: 56px; height: 56px; margin-bottom: 6px; border-radius: 50%; background: var(--surface); box-shadow: 0 0 0 1px var(--line); color: var(--muted); }
+    .empty-icon svg { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .empty.ok .empty-icon { color: var(--ok); }
+    .empty strong { font-size: 16px; font-weight: 650; }
+    .empty span { color: var(--muted); font-size: 14.5px; }
 
     @media (max-width: 560px) {
       .brand small { display: none; }
-      .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .kpi strong { font-size: 16px; }
-      .controls button { padding: 11px 13px; font-size: 13px; }
+      .kpi.big strong { font-size: 36px; }
+      .controls button { padding: 12px 14px; font-size: 14px; }
     }
 
     @media (prefers-reduced-motion: reduce) {
-      #scan-frame .scanline { animation: none; opacity: .6; top: 50%; }
+      #scan-frame .scanline { animation: none; opacity: .7; top: 50%; }
       #overlay { animation: none; }
     }
   </style>
@@ -515,13 +747,14 @@
     <a-entity camera></a-entity>
   </a-scene>
 
-  <div id="hud">
+  <div id="hud" data-view="scan">
+    <div id="view-scan">
     <div class="topbar">
       <div class="brand glass">
         <div class="logo">ZL</div>
         <div>
           <strong>Zwischenlager AR</strong>
-          <small>Industrie 4.0 · Lagerplatz-Scanner</small>
+          <small>Lagerplatz-Scanner</small>
         </div>
       </div>
 
@@ -539,62 +772,67 @@
     <div id="scan-hint" class="glass">Hiro-Marker in den Rahmen halten</div>
 
     <div id="overlay" class="glass">
-      <div class="grabber"></div>
-      <div class="overlay-header">
+      <div class="sheet-head">
         <div>
-          <span class="eyebrow">Marker erkannt · HIRO</span>
+          <span class="eyebrow">Marker erkannt: Hiro</span>
           <h2>Zwischenlager</h2>
         </div>
         <span class="order-id" id="order-number">–</span>
       </div>
 
-      <div class="kpis">
-        <div class="kpi">
-          <small>Paletten im Lager</small>
-          <strong id="pallet-count">–</strong>
-        </div>
-        <div class="kpi">
-          <small>Paletten-Nr.</small>
-          <strong id="pallet-number">–</strong>
-        </div>
-        <div class="kpi">
-          <small>Scanvorgänge</small>
-          <strong id="scan-count-box">0</strong>
-        </div>
-        <div class="kpi">
-          <small>Maschinenstart</small>
-          <strong id="started">--:--:--</strong>
-        </div>
-        <div class="kpi live">
-          <small>Maschinenlaufzeit</small>
-          <strong id="runtime">00:00:00</strong>
-        </div>
-        <div class="kpi vib">
-          <div class="vib-head">
-            <small>Vibration · P-101 <em>OPC UA</em></small>
-            <span class="vib-meta" id="vib-time">warte auf Werte …</span>
-            <span class="vib-meta" id="vib-avg">Ø 5 min (SQLite): –</span>
-            <span class="vib-src"><b id="src-ws">WebSocket</b><b id="src-mqtt">MQTT</b></span>
+      <div class="sheet-body">
+        <div class="kpis">
+          <div class="kpi big">
+            <small>Paletten im Lager</small>
+            <strong id="pallet-count">–</strong>
           </div>
-          <svg class="vib-spark" viewBox="0 0 120 34" preserveAspectRatio="none" aria-hidden="true">
-            <polyline id="vib-line" points="" />
-          </svg>
-          <strong id="vib-value">–</strong>
+          <div class="kpi big">
+            <small>Paletten-Nr.</small>
+            <strong id="pallet-number">–</strong>
+          </div>
+          <div class="kpi">
+            <small>Scanvorgänge</small>
+            <strong id="scan-count-box">0</strong>
+          </div>
+          <div class="kpi">
+            <small>Maschinenstart</small>
+            <strong id="started">--:--:--</strong>
+          </div>
+          <div class="kpi live">
+            <small>Maschinenlaufzeit</small>
+            <strong id="runtime">00:00:00</strong>
+          </div>
+          <div class="kpi vib">
+            <div class="vib-top">
+              <small>Vibration P-101 <em>OPC UA</em></small>
+              <span class="vib-src"><b id="src-ws">WebSocket</b><b id="src-mqtt">MQTT</b></span>
+            </div>
+            <div class="vib-main">
+              <svg class="vib-spark" viewBox="0 0 120 34" preserveAspectRatio="none" aria-hidden="true">
+                <polyline id="vib-line" points="" />
+              </svg>
+              <strong id="vib-value">–</strong>
+            </div>
+            <div class="vib-foot">
+              <span class="vib-meta" id="vib-time">warte auf Werte …</span>
+              <span class="vib-meta" id="vib-avg">Ø 5 min (SQLite): –</span>
+            </div>
+          </div>
         </div>
-      </div>
 
-      <div class="order">
-        <small>Aktueller Auftrag</small>
-        <dl class="order-rows" id="order-text">
-          <dt>Dose</dt><dd>–</dd>
-          <dt>Deckel</dt><dd>–</dd>
-          <dt>Kugeln</dt><dd>–</dd>
-        </dl>
-      </div>
+        <div class="order">
+          <small>Aktueller Auftrag</small>
+          <dl class="order-rows" id="order-text">
+            <dt>Dose</dt><dd>–</dd>
+            <dt>Deckel</dt><dd>–</dd>
+            <dt>Kugeln</dt><dd>–</dd>
+          </dl>
+        </div>
 
-      <div class="overlay-footer">
-        <span id="scan-count">Erkennungen: 0</span>
-        <span id="last-seen">Noch nicht erkannt</span>
+        <div class="overlay-footer">
+          <span id="scan-count">Erkennungen: 0</span>
+          <span id="last-seen">Noch nicht erkannt</span>
+        </div>
       </div>
     </div>
 
@@ -608,7 +846,356 @@
         Ausschalten
       </button>
     </div>
+    </div>
+
+    <section class="page" id="page-logs" hidden aria-label="Logs">
+      <header class="page-head">
+        <div>
+          <h2>Logs</h2>
+          <p id="log-sub">Ereignisse der App</p>
+        </div>
+        <div class="page-actions">
+          <button type="button" class="btn-soft" id="log-copy">Kopieren</button>
+          <button type="button" class="btn-soft" id="log-clear">Leeren</button>
+        </div>
+      </header>
+      <div class="filters" role="group" aria-label="Logs filtern">
+        <button type="button" class="filter" data-filter="all" aria-pressed="true">Alle</button>
+        <button type="button" class="filter" data-filter="Scan" aria-pressed="false">Scan</button>
+        <button type="button" class="filter" data-filter="Verbindung" aria-pressed="false">Verbindung</button>
+        <button type="button" class="filter" data-filter="Daten" aria-pressed="false">Daten</button>
+        <button type="button" class="filter" data-filter="System" aria-pressed="false">System</button>
+      </div>
+      <div class="page-scroll">
+        <ul class="log-list" id="log-list"></ul>
+        <div class="empty" id="log-empty" hidden>
+          <div class="empty-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg></div>
+          <strong>Keine Einträge</strong>
+          <span>Sobald etwas passiert, erscheint es hier.</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="page" id="page-errors" hidden aria-label="Fehlermeldungen">
+      <header class="page-head">
+        <div>
+          <h2>Fehlermeldungen</h2>
+          <p id="err-sub">Keine aktiven Fehler</p>
+        </div>
+        <div class="page-actions">
+          <button type="button" class="btn-soft" id="err-clear">Alle löschen</button>
+        </div>
+      </header>
+      <div class="page-scroll">
+        <ul class="err-list" id="err-list"></ul>
+        <div class="empty ok" id="err-empty" hidden>
+          <div class="empty-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></svg></div>
+          <strong>Keine Fehlermeldungen</strong>
+          <span>Aktuell läuft alles ohne Störung.</span>
+        </div>
+      </div>
+    </section>
+
+    <nav class="tabbar glass" aria-label="Hauptmenü">
+      <button type="button" class="tab" data-tab="scan" aria-current="page">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"/><path d="M7 12h10"/></svg>
+        Scannen
+      </button>
+      <button type="button" class="tab" data-tab="logs">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
+        Logs
+      </button>
+      <button type="button" class="tab" data-tab="errors" id="tab-errors">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
+        Fehler
+        <span class="badge" id="err-badge" hidden>0</span>
+      </button>
+    </nav>
   </div>
+
+  <!-- Menü, Logs und Fehlermeldungen. Läuft vor dem App-Skript und beobachtet nur, was dort passiert
+       (Statusanzeigen, Marker, Warnungen). Am bestehenden Ablauf ändert es nichts. -->
+  <script>
+  (function () {
+    'use strict';
+    const $ = id => document.getElementById(id);
+    const hud = $('hud');
+    const LS_LOGS = 'zlLogs', LS_ERR = 'zlErrors';
+    const MAX_LOGS = 200, MAX_ERR = 50;
+
+    function load(key) {
+      try { const v = JSON.parse(localStorage.getItem(key) || '[]'); return Array.isArray(v) ? v : []; }
+      catch (e) { return []; }
+    }
+    function save(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) {} }
+    const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    function stamp(ts) {
+      const d = new Date(ts);
+      const t = d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      return d.toDateString() === new Date().toDateString()
+        ? t : d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' }) + ' ' + t;
+    }
+
+    let logs = load(LS_LOGS);
+    let errors = load(LS_ERR);
+    let logFilter = 'all';
+
+    /* ---------- Logs ---------- */
+    function addLog(level, cat, msg) {
+      const now = Date.now();
+      // gleiche Meldung in kurzer Zeit (z. B. Wiederverbinden alle 3 s) -> zusammenfassen statt zumüllen
+      const dup = logs.slice(0, 8).find(l => l.msg === msg && l.cat === cat && now - l.t < 120000);
+      if (dup) {
+        dup.n = (dup.n || 1) + 1;
+        dup.t = now;
+        logs.splice(logs.indexOf(dup), 1);
+        logs.unshift(dup);
+      } else {
+        logs.unshift({ t: now, level, cat, msg, n: 1 });
+        if (logs.length > MAX_LOGS) logs.length = MAX_LOGS;
+      }
+      save(LS_LOGS, logs);
+      renderLogs();
+    }
+
+    function renderLogs() {
+      const items = logs.filter(l => logFilter === 'all' || l.cat === logFilter);
+      $('log-list').innerHTML = items.map(l =>
+        '<li class="log-row lvl-' + esc(l.level) + '">' +
+          '<span class="log-dot"></span>' +
+          '<div><span class="log-msg">' + esc(l.msg) + (l.n > 1 ? '<span class="log-n">×' + l.n + '</span>' : '') + '</span>' +
+          '<span class="log-meta">' + esc(l.cat) + '</span></div>' +
+          '<time class="log-time">' + esc(stamp(l.t)) + '</time>' +
+        '</li>').join('');
+      $('log-empty').hidden = items.length > 0;
+      $('log-sub').textContent = items.length
+        ? items.length + (items.length === 1 ? ' Eintrag' : ' Einträge') + ', neueste zuerst'
+        : 'Ereignisse der App';
+    }
+
+    /* ---------- Fehlermeldungen ---------- */
+    function reportError(key, cat, title, detail, hint) {
+      const now = Date.now();
+      let e = errors.find(x => x.key === key && !x.resolved);
+      if (e) {
+        e.count++;
+        e.last = now;
+        if (detail) e.detail = detail;
+        errors.splice(errors.indexOf(e), 1);
+      } else {
+        e = { key, title, detail, hint, count: 1, first: now, last: now, resolved: false };
+        if (errors.length >= MAX_ERR) errors.length = MAX_ERR - 1;
+      }
+      errors.unshift(e);
+      save(LS_ERR, errors);
+      renderErrors();
+      addLog('error', cat, title);
+    }
+
+    function resolveError(key) {
+      let changed = false;
+      errors.forEach(e => {
+        if (e.key === key && !e.resolved) { e.resolved = true; e.resolvedAt = Date.now(); changed = true; }
+      });
+      if (changed) { save(LS_ERR, errors); renderErrors(); }
+    }
+
+    function renderErrors() {
+      const active = errors.filter(e => !e.resolved).length;
+      $('err-list').innerHTML = errors.map(e =>
+        '<li class="err-card' + (e.resolved ? ' resolved' : '') + '">' +
+          '<div class="err-top"><span class="err-title">' + esc(e.title) + '</span>' +
+          '<span class="err-state">' + (e.resolved ? 'Behoben' : 'Aktiv') + '</span></div>' +
+          (e.detail ? '<p class="err-detail">' + esc(e.detail) + '</p>' : '') +
+          (e.hint && !e.resolved ? '<p class="err-hint"><b>Was tun?</b> ' + esc(e.hint) + '</p>' : '') +
+          '<div class="err-meta">Zuletzt ' + esc(stamp(e.last)) +
+            (e.count > 1 ? ', ' + e.count + '× aufgetreten' : '') +
+            (e.resolved && e.resolvedAt ? ', behoben ' + esc(stamp(e.resolvedAt)) : '') + '</div>' +
+        '</li>').join('');
+      $('err-empty').hidden = errors.length > 0;
+      $('err-sub').textContent = active
+        ? active + (active === 1 ? ' aktiver Fehler' : ' aktive Fehler')
+        : (errors.length ? 'Keine aktiven Fehler, ältere Meldungen sind behoben' : 'Keine aktiven Fehler');
+      const badge = $('err-badge');
+      badge.hidden = active === 0;
+      badge.textContent = active > 9 ? '9+' : String(active);
+      $('tab-errors').setAttribute('aria-label', active ? 'Fehler, ' + active + ' aktiv' : 'Fehler');
+    }
+
+    /* ---------- Menü ---------- */
+    const tabs = Array.from(document.querySelectorAll('.tab'));
+    function setView(view) {
+      hud.dataset.view = view;
+      tabs.forEach(b => {
+        if (b.dataset.tab === view) b.setAttribute('aria-current', 'page');
+        else b.removeAttribute('aria-current');
+      });
+      $('page-logs').hidden = view !== 'logs';
+      $('page-errors').hidden = view !== 'errors';
+    }
+    tabs.forEach(b => b.addEventListener('click', () => setView(b.dataset.tab)));
+
+    document.querySelectorAll('.filter').forEach(b => b.addEventListener('click', () => {
+      logFilter = b.dataset.filter;
+      document.querySelectorAll('.filter').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+      renderLogs();
+    }));
+
+    function flash(btn, text) {
+      const old = btn.textContent;
+      btn.textContent = text;
+      setTimeout(() => { btn.textContent = old; }, 1600);
+    }
+    $('log-clear').addEventListener('click', () => { logs = []; save(LS_LOGS, logs); renderLogs(); });
+    $('err-clear').addEventListener('click', () => { errors = []; save(LS_ERR, errors); renderErrors(); });
+    $('log-copy').addEventListener('click', async () => {
+      const text = logs.slice().reverse().map(l =>
+        new Date(l.t).toLocaleString('de-DE') + '  [' + l.cat + '] ' + l.msg + (l.n > 1 ? ' (×' + l.n + ')' : '')).join('\n');
+      try { await navigator.clipboard.writeText(text); flash($('log-copy'), 'Kopiert'); }
+      catch (e) { flash($('log-copy'), 'Nicht möglich'); }
+    });
+
+    /* ---------- Beobachter: Statusanzeigen der App ---------- */
+    let lastWarn = null;
+    const fmtArg = a => {
+      if (a instanceof Error) return a.message;
+      if (typeof a === 'string') return a;
+      try { return JSON.stringify(a); } catch (e) { return String(a); }
+    };
+    const origWarn = console.warn.bind(console);
+    console.warn = function () {
+      const args = Array.prototype.slice.call(arguments);
+      lastWarn = { t: Date.now(), text: args.map(fmtArg).join(' ') };
+      const m = /^Ungültige (WebSocket|MQTT)-Daten/.exec(lastWarn.text);
+      if (m) {
+        reportError('data-' + m[1], 'Daten', 'Ungültige ' + m[1] + '-Daten empfangen',
+          'Die Nachricht war kein gültiges JSON und wurde ignoriert: ' + String(args[1] || '').slice(0, 120),
+          'Format der Node-RED-Nachricht prüfen. Erwartet wird JSON mit dem Feld „value“.');
+      }
+      origWarn.apply(console, args);
+    };
+    function techDetail(prefix, fallback) {
+      if (lastWarn && Date.now() - lastWarn.t < 3000 && lastWarn.text.indexOf(prefix) === 0) {
+        const msg = lastWarn.text.slice(prefix.length).trim();
+        if (/failed to fetch|networkerror|load failed/i.test(msg)) return 'Node-RED ist nicht erreichbar (Netzwerkfehler oder blockierte Anfrage).';
+        return 'Technische Meldung: ' + msg;
+      }
+      return fallback;
+    }
+
+    function watch(el, handler) {
+      let last = '';
+      const run = () => {
+        const text = el.textContent.replace(/\s+/g, ' ').trim();
+        if (!text || text === last) return;
+        last = text;
+        handler(text);
+      };
+      new MutationObserver(run).observe(el, { childList: true, characterData: true, subtree: true, attributes: true, attributeFilter: ['class'] });
+    }
+
+    watch($('mqtt-state'), text => {
+      if (/Online/.test(text)) { addLog('ok', 'Verbindung', 'MQTT verbunden'); resolveError('mqtt'); }
+      else if (/verbinde/.test(text)) addLog('info', 'Verbindung', 'MQTT verbindet …');
+      else if (/Bibliothek/.test(text)) reportError('mqtt-lib', 'Verbindung', 'MQTT-Bibliothek nicht geladen',
+        'Das Skript mqtt.min.js konnte nicht geladen werden.', 'Internetverbindung prüfen und die Seite neu laden.');
+      else if (/Offline/.test(text)) reportError('mqtt', 'Verbindung', 'MQTT offline',
+        'Die Verbindung zum MQTT-Broker ist unterbrochen. Die App verbindet sich automatisch neu.',
+        'Internetverbindung und Broker-Adresse prüfen.');
+      else if (/Fehler/.test(text)) reportError('mqtt', 'Verbindung', 'MQTT-Fehler',
+        techDetail('MQTT-Fehler:', 'Die Verbindung zum MQTT-Broker ist fehlgeschlagen.'),
+        'Internetverbindung und Broker-Adresse prüfen.');
+      else addLog('info', 'Verbindung', text);
+    });
+
+    watch($('api-state'), text => {
+      let m;
+      if (/Adresse fehlt/.test(text)) reportError('api-config', 'Verbindung', 'Node-RED-Adresse fehlt',
+        'Es ist keine Adresse für Node-RED hinterlegt, daher gibt es weder Aufträge noch Live-Vibration.',
+        'Oben rechts im Scanner auf „Node-RED“ tippen und die Adresse eintragen.');
+      else if (/braucht https/.test(text)) reportError('api-config', 'Verbindung', 'Node-RED nur per http erreichbar',
+        'Die App läuft über https, die Node-RED-Adresse beginnt aber mit http. Der Browser blockiert solche Anfragen.',
+        'Eine https-Adresse verwenden, zum Beispiel über einen Cloudflare-Tunnel.');
+      else if (/WS verbunden/.test(text)) { addLog('ok', 'Verbindung', 'WebSocket verbunden, Vibration live'); resolveError('ws'); resolveError('api-config'); }
+      else if (/WebSocket · verbinde/.test(text)) addLog('info', 'Verbindung', 'WebSocket verbindet …');
+      else if (/WebSocket · getrennt/.test(text)) reportError('ws', 'Verbindung', 'WebSocket getrennt',
+        'Die Live-Verbindung zu Node-RED ist unterbrochen. Die App versucht alle 3 Sekunden, sich neu zu verbinden.',
+        'Prüfen, ob Node-RED läuft und die Adresse stimmt.');
+      else if ((m = /^REST · (\d+) · (\d+) ms/.exec(text))) {
+        addLog('ok', 'Daten', 'Auftrag per REST geladen (HTTP ' + m[1] + ', ' + m[2] + ' ms)');
+        resolveError('rest');
+      }
+      else if (/REST · Fehler/.test(text)) reportError('rest', 'Daten', 'Auftrag konnte nicht geladen werden',
+        techDetail('REST-Fehler:', 'Die Anfrage an Node-RED ist fehlgeschlagen.'),
+        'Node-RED-Adresse und den Flow „/api/auftrag“ prüfen.');
+      else addLog('info', 'Verbindung', text);
+    });
+
+    /* ---------- Beobachter: Scanner und Kamera ---------- */
+    const frame = $('scan-frame');
+    let wasFound = false;
+    new MutationObserver(() => {
+      const found = frame.classList.contains('found');
+      if (found === wasFound) return;
+      wasFound = found;
+      if (found) addLog('ok', 'Scan', 'Hiro-Marker erkannt');
+      else if ($('scanner-text').textContent.trim() !== 'Kamera ausgeschaltet') addLog('info', 'Scan', 'Marker nicht mehr sichtbar');
+    }).observe(frame, { attributes: true, attributeFilter: ['class'] });
+
+    watch($('scanner-text'), text => {
+      if (text === 'Kamera ausgeschaltet') addLog('warn', 'Scan', 'Kamera ausgeschaltet');
+    });
+
+    const scene = document.querySelector('a-scene');
+    if (scene) {
+      scene.addEventListener('camera-init', () => { addLog('ok', 'Scan', 'Kamera gestartet'); resolveError('camera'); });
+      scene.addEventListener('camera-error', ev => {
+        const d = (ev && ev.detail) || {};
+        const err = d.error || d;
+        const tech = [err && err.name, err && err.message].filter(Boolean).join(': ');
+        reportError('camera', 'Scan', 'Kamera nicht verfügbar',
+          tech || 'Der Zugriff auf die Kamera ist fehlgeschlagen.',
+          'Kamerazugriff im Browser erlauben. Die Kamera funktioniert nur über https oder localhost.');
+      });
+    }
+
+    /* ---------- Beobachter: Vibrationswerte ---------- */
+    let vibStale = false, vibSeen = false;
+    watch($('vib-time'), text => {
+      if (/keine neuen Werte/.test(text)) {
+        if (vibStale) return;
+        vibStale = true;
+        reportError('vib', 'Daten', 'Keine neuen Vibrationswerte',
+          'Seit mehr als 10 Sekunden sind keine Messwerte von P-101 eingetroffen.',
+          'Prüfen, ob die Maschine läuft und Node-RED Daten sendet.');
+      } else if (/^aktualisiert/.test(text)) {
+        if (vibStale) { vibStale = false; addLog('ok', 'Daten', 'Vibrationswerte wieder empfangen'); resolveError('vib'); }
+        else if (!vibSeen) addLog('ok', 'Daten', 'Erste Vibrationswerte empfangen');
+        vibSeen = true;
+      }
+    });
+
+    /* ---------- Unerwartete Fehler ---------- */
+    window.addEventListener('error', ev => {
+      const t = ev.target;
+      if (t && t !== window && t.tagName === 'SCRIPT') {
+        reportError('script', 'System', 'Skript konnte nicht geladen werden', t.src || '',
+          'Internetverbindung prüfen und die Seite neu laden.');
+      } else if (ev.message) {
+        reportError('js', 'System', 'Unerwarteter Fehler in der App', ev.message,
+          'Seite neu laden. Tritt der Fehler erneut auf, die Logs kopieren und an die IT weitergeben.');
+      }
+    }, true);
+    window.addEventListener('unhandledrejection', ev => {
+      reportError('js-promise', 'System', 'Unerwarteter Fehler in der App', fmtArg(ev.reason && ev.reason.message ? ev.reason.message : ev.reason),
+        'Seite neu laden. Tritt der Fehler erneut auf, die Logs kopieren und an die IT weitergeben.');
+    });
+
+    renderLogs();
+    renderErrors();
+    addLog('info', 'System', 'App gestartet');
+  })();
+  </script>
 
   <script>
     /* =========================================================
